@@ -1,260 +1,133 @@
-# 🧩 STLManager — Cahier technique de développement complet
-
-## 📘 Objectif
-
-Créer une **application web complète** permettant de **gérer une collection de projets d'impression 3D**, inspirée visuellement de **Plex / Jellyfin**.
-
-L’application gère :
-- des **projets** contenant des fichiers (STL, images, GIF, vidéos, etc.)
-- un **fichier JSON** par projet (métadonnées : tags, miniature, note…)
-- une **base de données SQLite** servant de cache
-- un **frontend React** moderne et responsive
-- un **backend FastAPI** pour la gestion des fichiers, de l’indexation et des métadonnées
-
----
-
-## 🧱 Architecture générale
+🧩 STLManager — Gestionnaire de fichiers 3D (STL)
+🎯 Objectif
 
-### Composants principaux
+STLManager est une application web locale (hébergée sur ton NAS via Docker) qui permet de gérer facilement une collection de fichiers STL (modèles 3D).
+Elle fonctionne un peu comme Plex ou Jellyfin, mais pour les fichiers 3D : elle scanne ton dossier de modèles, crée une base de données interne, et te permet de parcourir, visualiser et organiser tes fichiers depuis une interface web moderne.
 
-| Élément | Technologie | Rôle |
-|----------|--------------|------|
-| **Backend API** | FastAPI (Python) | Lecture/écriture des fichiers, scan, gestion du cache |
-| **Frontend Web** | React + Vite + TailwindCSS + Three.js | Interface utilisateur moderne |
-| **Base locale** | SQLite | Cache et index de la collection |
-| **Stockage principal** | Dossier partagé NAS (SMB) | Contient les dossiers/projets |
-| **Déploiement** | Docker / Docker Compose sous OMV | Exécution sur Raspberry Pi |
-| **Tests locaux** | MacOS ou PC | Environnement de dev + debug |
+⚙️ Fonctionnement général
+🧠 1. Scan automatique de la collection
 
----
+Lors du premier lancement, STLManager te demande le dossier racine où sont stockés tes fichiers STL (ex : un dossier partagé SMB du NAS).
 
-## 🗂️ Structure des répertoires
+L’application analyse récursivement ce dossier et crée un fichier JSON pour chaque projet (si non existant).
 
-stlmanager/
-│
-├── backend/
-│ ├── app/
-│ │ ├── main.py
-│ │ ├── models.py
-│ │ ├── routes/
-│ │ │ ├── projects.py
-│ │ │ ├── files.py
-│ │ │ └── settings.py
-│ │ ├── utils/
-│ │ │ ├── scanner.py
-│ │ │ ├── json_manager.py
-│ │ │ ├── thumbnailer.py
-│ │ │ └── tags.py
-│ │ └── database.py
-│ ├── requirements.txt
-│ └── Dockerfile
-│
-├── frontend/
-│ ├── src/
-│ │ ├── App.jsx
-│ │ ├── components/
-│ │ ├── pages/
-│ │ ├── hooks/
-│ │ ├── assets/
-│ │ └── utils/
-│ ├── vite.config.js
-│ ├── package.json
-│ └── Dockerfile
-│
-├── docker-compose.yml
-├── .env
-└── README.md
+Chaque JSON contient les métadonnées du projet :
 
+Nom du fichier
 
+Emplacement
 
-Crée ensuite le fichier app/main.py :
+Date du premier scan
 
-Point d’entrée de FastAPI
-Montre un exemple de route /api/projects
+Liste de tags (si ajoutés plus tard)
 
-1.2 Structure des modules
-/app/routes/projects.py
-GET /projects : liste les projets (depuis le cache ou le dossier)
-POST /scan : lance un scan des nouveaux projets
-GET /project/{id} : retourne les infos d’un projet
-/app/utils/scanner.py
-Fonction scan_collection() :
-lit le dossier parent défini dans .env
-crée un JSON vierge pour chaque nouveau projet
-met à jour le cache SQLite
-/app/utils/json_manager.py
-Lecture et écriture du JSON dans chaque projet :
+Miniature (si définie ultérieurement)
 
+👉 Si un JSON existe déjà, il est simplement chargé et mis à jour si besoin.
 
+🗃️ 2. Base de données interne (cache SQLite)
 
-/app/utils/thumbnailer.py
-Génère une miniature pour le frontend (image, vidéo ou 3D placeholder)
-/app/database.py
-Gère la base SQLite : tables projects, tags, files
-1.3 Configuration de l’environnement
-Fichier .env :
+Tous les projets scannés sont indexés dans une base SQLite locale (/home/pi/docker/stlmanager/cache/cache.db).
 
+Ce cache permet un affichage instantané sans rescanner le dossier à chaque fois.
 
+Le scan ne se relance que sur demande ou si l’utilisateur ajoute un nouveau projet.
 
+💻 3. Interface web moderne
 
-💻 Étape 2 — Création du frontend (React + Vite + TailwindCSS + Three.js)
-Objectif
-Créer une interface moderne, fluide, responsive, inspirée de Plex/Jellyfin.
+Accessible depuis ton navigateur via http://ton-nas:8090.
 
+Interface inspirée de Plex / Jellyfin, avec des vignettes visuelles pour chaque modèle STL.
 
-🧠 Étape 3 — Gestion du JSON par projet
-Objectif
+Chaque projet est représenté par une carte avec :
 
-Chaque dossier projet possède son propre JSON :
-généré automatiquement s’il n’existe pas
-mis à jour lors des éditions
-Format minimal :
+Une miniature du modèle 3D (générée automatiquement ou ajoutée manuellement)
 
+Le nom du fichier
 
+Des tags personnalisables (ex : “Pièce imprimante”, “Drone”, “Support”)
 
+Un bouton pour ouvrir, prévisualiser ou télécharger le fichier STL
 
+🧰 4. Page de configuration
 
-Processus :
+Accessible via un menu “Paramètres” dans l’interface.
 
-Lors du scan, FastAPI vérifie la présence du JSON.
-S’il n’existe pas → il le crée.
-Les infos sont ajoutées au cache SQLite pour accélérer les accès.
+Permet de :
 
-🧩 Étape 4 — Base SQLite (cache)
-Objectif
+Sélectionner ou modifier le dossier racine de la collection (même sur un NAS distant)
 
-Stocker les infos essentielles pour un affichage instantané.
+Lancer manuellement un rescan complet
 
-Table projects
-id	name	path	thumbnail	rating	last_modified
-Table tags
+Gérer le chemin du cache SQLite
 
-| id | project_id | tag |
+Basculer entre thème clair / sombre
 
-Mise à jour :
-Au premier scan complet
-À chaque ajout ou suppression de projet
-Lors de la modification d’un tag depuis le frontend
+🔍 5. Recherche et filtres
 
-🖼️ Étape 5 — Gestion des miniatures
-Objectif
+Barre de recherche instantanée par :
 
-Pour les images, GIF, vidéos → extraire une miniature.
-Pour les STL → générer un rendu 3D simplifié (Three.js côté frontend).
-Backend
-thumbnailer.py génère des fichiers PNG (cachés localement dans /app/data/thumbnails/).
+Nom de fichier
 
-Frontend
-Chargement progressif + lazy loading via React.
+Tag
 
-⚙️ Étape 6 — Interface et ergonomie
-Objectif
+Dossier
 
-Offrir une expérience type Plex / Jellyfin :
+Filtres dynamiques pour naviguer rapidement dans de grandes collections.
 
-fond sombre
-grille fluide
-tuiles dynamiques
-transitions douces (Framer Motion)
-vue détail immersive
+🧩 6. Visualisation 3D
 
-Outils
-TailwindCSS pour la mise en page
-Framer Motion pour les transitions
-React Router DOM pour la navigation fluide
-Three.js pour la prévisualisation STL
+Intégration d’un visualiseur STL interactif (via Three.js).
 
-🧩 Étape 7 — Configuration dynamique (page “Paramètres”)
-Objectif
+L’utilisateur peut :
 
-Permettre à l’utilisateur de :
+Faire pivoter, zoomer et déplacer le modèle.
 
-définir le dossier source (STL_FOLDER)
-définir la fréquence de scan
-changer le thème
-vider le cache SQLite
+Activer/désactiver l’affichage filaire ou solide.
 
-Mécanisme
-Enregistrement dans un fichier config.json (backend)
-Sauvegarde persistante
-Lecture à chaque démarrage du backend
+Basculer entre plusieurs miniatures ou vues.
 
-🔄 Étape 8 — Scan automatique
+🧠 7. Organisation & métadonnées
 
-Le scan :
-se déclenche au démarrage
-peut être relancé manuellement depuis le frontend
+Possibilité d’ajouter des tags personnalisés.
 
-détecte :
+Les modifications sont sauvegardées dans le JSON local du projet et dans la base SQLite.
 
-nouveaux dossiers
-suppressions
-modifications de fichiers
-Les nouveaux projets sont ajoutés avec un JSON vierge.
+Possibilité future : création automatique de collections thématiques (par tag, dossier, date...).
 
-🧪 Étape 9 — Tests et debug local
-Sur Mac :
+🔒 8. Architecture et déploiement
 
+Backend : FastAPI (Python)
 
+Gère le scan des dossiers, la lecture/écriture JSON et la base SQLite.
 
-Dans un autre terminal :
+Frontend : React + TailwindCSS
 
+Fournit une interface fluide, moderne et responsive.
 
+Base locale : SQLite (cache et indexation rapide)
 
+Déploiement : Docker Compose sous OpenMediaVault
 
-Accède à :
-Backend : http://localhost:8090/api
-Frontend : http://localhost:5173
-Sur Raspberry (Docker)
-Compile l’image sur ton Mac
-Pousse sur le Raspberry via SSH
-OMV → Docker → Compose → “Up”
+L’application tourne localement sur ton NAS (port 8090)
 
-🐳 Étape 10 — Conteneurisation Docker
-Objectif
+Données persistantes via volumes Docker :
 
-Faciliter le déploiement sur Raspberry / OMV.
+volumes:
+  - /home/pi/docker/stlmanager/cache:/app/data
+  - /chemin/vers/CollectionSTL:/mnt/CollectionSTL
 
-Backend Dockerfile
-Basé sur python:3.11-slim
-Copie du code + requirements
-Exposition du port 8090
-Frontend Dockerfile
-Basé sur node:20-alpine
-Build de la version de production
-Copie dans nginx:alpine
-docker-compose.yml
 
-Monte les volumes :
+🔁 Cycle de vie typique
 
-cache SQLite : /home/pi/docker/stlmanager/cache
-dossier collection : configuré via .env
+Tu choisis ton dossier STL (via la page de configuration).
 
-🧠 Étape 11 — Optimisations de performance
+L’appli scanne le contenu → crée les fichiers JSON manquants.
 
-Cache SQLite pour limiter l’accès au disque
-Lazy loading des miniatures
-Pagination virtuelle
-Détection de modification par timestamp
-Compression des images miniatures
-Caching HTTP pour le frontend
+Tous les fichiers sont indexés dans le cache SQLite.
 
-🌟 Étape 12 — Améliorations futures
-Fonction	Description
-🔍 Recherche avancée	multi-tags + note + texte libre
-🧠 IA de suggestion de tags	basée sur le nom du projet
-🧩 Exports JSON/CSV	pour sauvegarde externe
-📊 Statistiques visuelles	nombre de projets, fichiers, taille totale
-🔔 Notifications	ajout/suppression de projet
-🧾 Historique	des modifications par date
-🧭 Résumé rapide
-Élément	Détails
-Backend	FastAPI + SQLite
-Frontend	React + Tailwind + Three.js
-Déploiement	Docker / OMV
-Cache	/home/pi/docker/stlmanager/cache/cache.db
-Port	8090
-Langue	Français
-Style	Type Plex / Jellyfin
+Tu explores ta collection dans le navigateur.
 
+Tu ajoutes des tags, génères des miniatures, etc.
 
+Les prochaines ouvertures sont quasi instantanées, sans rescanner.

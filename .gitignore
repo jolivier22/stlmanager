@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.pid
+/data/

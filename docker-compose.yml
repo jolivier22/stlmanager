@@ -1,0 +1,21 @@
+version: '3.9'
+services:
+  api:
+    build: ./backend
+    container_name: stlmanager-api
+    environment:
+      - CACHE_DB_PATH=/app/data/cache.db
+      - COLLECTION_ROOT=/mnt/CollectionSTL
+    volumes:
+      - ./data:/app/data
+      - "H:/Fichiers 3D:/mnt/CollectionSTL:ro"
+    ports:
+      - '8091:8000'
+
+  web:
+    build: ./frontend
+    container_name: stlmanager-web
+    environment:
+      - VITE_API_URL=http://localhost:8091
+    ports:
+      - '8090:80'

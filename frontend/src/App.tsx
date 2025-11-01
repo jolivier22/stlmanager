@@ -55,6 +55,9 @@ export default function App() {
   // Detail view state
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [detail, setDetail] = useState<any | null>(null)
+  // Lightbox state
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const [lightboxIndex, setLightboxIndex] = useState(0)
 
   const query = useMemo(() => q.trim(), [q])
 
@@ -238,6 +241,28 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, selectedPath])
 
+  // Lightbox keyboard navigation
+  useEffect(() => {
+    if (!lightboxOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setLightboxOpen(false); return }
+      if (!detail?.media?.images?.length) return
+      if (e.key === 'ArrowRight') setLightboxIndex(i => (i + 1) % detail.media.images.length)
+      if (e.key === 'ArrowLeft') setLightboxIndex(i => (i - 1 + detail.media.images.length) % detail.media.images.length)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightboxOpen, detail])
+
+  const openLightbox = (index: number) => {
+    console.log('[lightbox] open', { index })
+    setLightboxIndex(index)
+    setLightboxOpen(true)
+  }
+  const closeLightbox = () => setLightboxOpen(false)
+  const nextLightbox = () => detail?.media?.images?.length ? setLightboxIndex(i => (i + 1) % detail.media.images.length) : null
+  const prevLightbox = () => detail?.media?.images?.length ? setLightboxIndex(i => (i - 1 + detail.media.images.length) % detail.media.images.length) : null
+
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
   return (
@@ -417,8 +442,42 @@ export default function App() {
                       <div className="mb-2 text-zinc-200 font-medium">Images</div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                         {detail.media.images.map((fn: string, i: number) => (
-                          <img key={i} src={fileUrl(`${detail.path}/${fn}`)} loading="lazy" className="w-full h-32 object-cover rounded border border-zinc-700 bg-zinc-900" />
+                          <div
+                            key={i}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Ouvrir l'image ${i+1}`}
+                            onClick={() => openLightbox(i)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openLightbox(i) }}
+                            className="relative group w-full h-32 overflow-hidden rounded border border-zinc-700 bg-zinc-900 cursor-pointer"
+                          >
+                            <img src={fileUrl(`${detail.path}/${fn}`)} loading="lazy" className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(i)} />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors cursor-pointer" onClick={() => openLightbox(i)} />
+                          </div>
                         ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Lightbox Modal */}
+                  {lightboxOpen && detail?.media?.images?.length ? (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onMouseDown={closeLightbox}>
+                      <div className="relative max-w-6xl max-h-[85vh] mx-4" onMouseDown={(e) => e.stopPropagation()}>
+                        <img
+                          src={fileUrl(`${detail.path}/${detail.media.images[lightboxIndex]}`)}
+                          className="max-w-full max-h-[85vh] object-contain rounded shadow-lg border border-zinc-800"
+                          alt="preview"
+                        />
+                        <button onClick={closeLightbox} className="absolute top-2 right-2 px-3 py-1.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-100 border border-zinc-700">Fermer</button>
+                        {detail.media.images.length > 1 && (
+                          <>
+                            <button onClick={prevLightbox} className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-zinc-900/70 hover:bg-zinc-800 text-zinc-100 border border-zinc-700">‹</button>
+                            <button onClick={nextLightbox} className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-zinc-900/70 hover:bg-zinc-800 text-zinc-100 border border-zinc-700">›</button>
+                            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs text-zinc-300 bg-zinc-900/60 px-2 py-0.5 rounded border border-zinc-700">
+                              {lightboxIndex + 1} / {detail.media.images.length}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   ) : null}
@@ -429,8 +488,15 @@ export default function App() {
                       <div className="mb-2 text-zinc-200 font-medium">Vidéos</div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                         {detail.media.videos.map((fn: string, i: number) => (
-                          <a key={i} href={fileUrl(`${detail.path}/${fn}`)} target="_blank" className="h-32 rounded border border-zinc-700 bg-zinc-900 flex items-center justify-center text-zinc-300 text-sm">
-                            🎬 {fn}
+                          <a
+                            key={i}
+                            href={fileUrl(`${detail.path}/${fn}`)}
+                            target="_blank"
+                            className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-2 p-2 text-zinc-300 text-sm"
+                            title={fn}
+                          >
+                            <span className="text-2xl" aria-hidden>🎬</span>
+                            <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-center">{fn}</span>
                           </a>
                         ))}
                       </div>
@@ -443,8 +509,15 @@ export default function App() {
                       <div className="mb-2 text-zinc-200 font-medium">Archives</div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                         {detail.media.archives.map((fn: string, i: number) => (
-                          <a key={i} href={fileUrl(`${detail.path}/${fn}`)} target="_blank" className="h-32 rounded border border-zinc-700 bg-zinc-900 flex items-center justify-center text-zinc-300 text-sm">
-                            📦 {fn}
+                          <a
+                            key={i}
+                            href={fileUrl(`${detail.path}/${fn}`)}
+                            target="_blank"
+                            className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-2 p-2 text-zinc-300 text-sm"
+                            title={fn}
+                          >
+                            <span className="text-2xl" aria-hidden>📦</span>
+                            <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-center">{fn}</span>
                           </a>
                         ))}
                       </div>
@@ -469,8 +542,15 @@ export default function App() {
                       <div className="mb-2 text-zinc-200 font-medium">Autres fichiers</div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                         {detail.media.others.map((fn: string, i: number) => (
-                          <a key={i} href={fileUrl(`${detail.path}/${fn}`)} target="_blank" className="h-32 rounded border border-zinc-700 bg-zinc-900 flex items-center justify-center text-zinc-300 text-sm">
-                            📄 {fn}
+                          <a
+                            key={i}
+                            href={fileUrl(`${detail.path}/${fn}`)}
+                            target="_blank"
+                            className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-2 p-2 text-zinc-300 text-sm"
+                            title={fn}
+                          >
+                            <span className="text-2xl" aria-hidden>📄</span>
+                            <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-center">{fn}</span>
                           </a>
                         ))}
                       </div>

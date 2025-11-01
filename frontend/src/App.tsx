@@ -57,6 +57,9 @@ export default function App() {
   const [detail, setDetail] = useState<any | null>(null)
   // Scroll preservation for Home list
   const [homeScrollY, setHomeScrollY] = useState<number>(0)
+  const [newTag, setNewTag] = useState<string>('')
+  const [tagSugs, setTagSugs] = useState<string[]>([])
+  const [tagSugsLoading, setTagSugsLoading] = useState<boolean>(false)
   // Lightbox state
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(0)
@@ -244,6 +247,36 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, selectedPath])
 
+  // Dynamic tag suggestions for add-tag input
+  useEffect(() => {
+    let stop = false
+    const run = async () => {
+      const q = (newTag || '').trim()
+      if (!q) { setTagSugs([]); return }
+      if (view !== 'detail') { setTagSugs([]); return }
+      try {
+        setTagSugsLoading(true)
+        const url = new URL(`${API_BASE}/folders/tags`)
+        url.searchParams.set('q', q)
+        url.searchParams.set('limit', '15')
+        const r = await fetch(url.toString())
+        const d = await r.json()
+        let sugs: string[] = Array.isArray(d?.tags) ? d.tags : []
+        if (Array.isArray(detail?.tags) && detail.tags.length) {
+          const setSel = new Set(detail.tags)
+          sugs = sugs.filter((t) => !setSel.has(t))
+        }
+        if (!stop) setTagSugs(sugs)
+      } catch {
+        if (!stop) setTagSugs([])
+      } finally {
+        if (!stop) setTagSugsLoading(false)
+      }
+    }
+    const id = setTimeout(run, 150)
+    return () => { stop = true; clearTimeout(id) }
+  }, [newTag, view, detail?.tags])
+
   // Restore scroll when returning to home
   useEffect(() => {
     if (view === 'home') {
@@ -296,6 +329,38 @@ export default function App() {
     } catch (err) {
       console.error('[preview] exception', err)
     }
+  }
+
+  const addTag = async (tagParam?: string) => {
+    if (!detail?.path) return
+    const source = (typeof tagParam === 'string' ? tagParam : newTag)
+    const tag = (source || '').trim()
+    if (!tag) return
+    try {
+      const url = new URL(`${API_BASE}/folders/tags/add`)
+      url.search = `path=${encodeURIComponent(detail.path)}&tag=${encodeURIComponent(tag)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      const d = await r.json()
+      if (r.ok && Array.isArray(d?.tags)) {
+        setDetail((prev: any) => prev ? { ...prev, tags: d.tags } : prev)
+        setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, tags: d.tags } : f) : prev))
+        setNewTag('')
+      }
+    } catch {}
+  }
+
+  const removeTag = async (tag: string) => {
+    if (!detail?.path) return
+    try {
+      const url = new URL(`${API_BASE}/folders/tags/remove`)
+      url.search = `path=${encodeURIComponent(detail.path)}&tag=${encodeURIComponent(tag)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      const d = await r.json()
+      if (r.ok && Array.isArray(d?.tags)) {
+        setDetail((prev: any) => prev ? { ...prev, tags: d.tags } : prev)
+        setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, tags: d.tags } : f) : prev))
+      }
+    } catch {}
   }
 
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
@@ -456,10 +521,47 @@ export default function App() {
                       </div>
                       <div className="pb-1">
                         <div className="text-2xl font-semibold text-zinc-100">{detail.name}</div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {(detail.tags ?? []).map((t: string, i: number) => (
-                            <span key={i} className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-200 border border-zinc-700">{t}</span>
+                        <div className="mt-2 flex flex-wrap gap-1 items-center">
+                          {Array.isArray(detail.tags) && detail.tags.map((t: string, i: number) => (
+                            <button
+                              key={i}
+                              className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-200 border border-zinc-700 hover:bg-zinc-700"
+                              onClick={() => removeTag(t)}
+                              title="Supprimer ce tag"
+                            >
+                              {t} ×
+                            </button>
                           ))}
+                          <div className="flex items-center gap-1 mt-1 relative">
+                            <input
+                              value={newTag}
+                              onChange={(e) => setNewTag(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag((e.target as HTMLInputElement).value) } }}
+                              placeholder="Ajouter un tag"
+                              className="px-2 py-1 rounded text-xs bg-zinc-900 text-zinc-100 border border-zinc-700"
+                            />
+                            <button onClick={() => addTag()} className="px-2 py-1 rounded text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700">Ajouter</button>
+                            {newTag && (tagSugsLoading || tagSugs.length > 0) && (
+                              <div className="absolute top-8 left-0 z-20 min-w-[180px] max-h-40 overflow-auto rounded border border-zinc-700 bg-zinc-900 text-xs shadow-lg">
+                                {tagSugsLoading ? (
+                                  <div className="px-2 py-1 text-zinc-400">Chargement…</div>
+                                ) : (
+                                  tagSugs.map((t, i) => (
+                                    <button
+                                      key={i}
+                                      className="w-full text-left px-2 py-1 hover:bg-zinc-800 text-zinc-100"
+                                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); addTag(t) }}
+                                    >
+                                      {t}
+                                    </button>
+                                  ))
+                                )}
+                                {!tagSugsLoading && tagSugs.length === 0 && (
+                                  <div className="px-2 py-1 text-zinc-500">Aucune suggestion</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                         {typeof detail.rating === 'number' && (
                           <div className="mt-2 text-amber-400">{'★★★★★'.slice(0, detail.rating)}{'☆☆☆☆☆'.slice(detail.rating)}</div>

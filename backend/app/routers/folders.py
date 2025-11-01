@@ -405,6 +405,99 @@ def tags_reindex_incremental():
     return {"added": added, "total": len(existing)}
 
 
+@router.post("/tags/add")
+def add_tag_to_folder(
+    path: str = Query(..., description="Chemin absolu du projet (dossier)"),
+    tag: str = Query(..., description="Tag à ajouter"),
+):
+    tag = (tag or "").strip()
+    if not tag:
+        raise HTTPException(status_code=400, detail="Tag vide")
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    meta_path = folder_path / ".stl_collect.json"
+    meta: dict = {}
+    if meta_path.exists() and meta_path.is_file():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception:
+            meta = {}
+    current: list[str] = []
+    raw = meta.get("tags")
+    if isinstance(raw, list):
+        current = [str(t) for t in raw if str(t).strip()]
+    elif isinstance(raw, str) and raw.strip():
+        current = [t.strip() for t in raw.split(",") if t.strip()]
+    if tag not in current:
+        current.append(tag)
+    meta["tags"] = current
+    try:
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur écriture meta: {e}")
+    # Update DB
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        csv_text = ",".join(current) if current else None
+        cur.execute("UPDATE folder_index SET tags = ? WHERE path = ?", (csv_text, path))
+        # Update tag catalog
+        cur.execute("INSERT OR IGNORE INTO tag_catalog(name) VALUES(?)", (tag,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+    return {"ok": True, "tags": current}
+
+
+@router.post("/tags/remove")
+def remove_tag_from_folder(
+    path: str = Query(..., description="Chemin absolu du projet (dossier)"),
+    tag: str = Query(..., description="Tag à supprimer"),
+):
+    tag = (tag or "").strip()
+    if not tag:
+        raise HTTPException(status_code=400, detail="Tag vide")
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    meta_path = folder_path / ".stl_collect.json"
+    meta: dict = {}
+    if meta_path.exists() and meta_path.is_file():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception:
+            meta = {}
+    current: list[str] = []
+    raw = meta.get("tags")
+    if isinstance(raw, list):
+        current = [str(t) for t in raw if str(t).strip()]
+    elif isinstance(raw, str) and raw.strip():
+        current = [t.strip() for t in raw.split(",") if t.strip()]
+    new_tags = [t for t in current if t != tag]
+    meta["tags"] = new_tags
+    try:
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur écriture meta: {e}")
+    # Update DB
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        csv_text = ",".join(new_tags) if new_tags else None
+        cur.execute("UPDATE folder_index SET tags = ? WHERE path = ?", (csv_text, path))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+    return {"ok": True, "tags": new_tags}
+
+
 @router.get("/detail")
 def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un projet (depuis folder_index)")):
     # Sécurité: le chemin doit exister dans l'index pour être autorisé

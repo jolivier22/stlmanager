@@ -729,7 +729,7 @@ export default function App() {
                           <a
                             key={i}
                             href={fileUrl(`${detail.path}/${fn}`)}
-                            target="_blank"
+                            download={fn}
                             className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-2 p-2 text-zinc-300 text-sm"
                             title={fn}
                           >

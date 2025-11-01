@@ -21,5 +21,13 @@ def get_file(path: str = Query(..., description="Absolute file path under COLLEC
 
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Fichier introuvable")
-
-    return FileResponse(str(target))
+    # Decide inline vs attachment based on extension
+    ext = target.suffix.lower()
+    image_ext = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    gif_ext = {".gif"}
+    video_ext = {".mp4", ".webm", ".mov", ".m4v"}
+    # Inline for media previews
+    if ext in image_ext or ext in gif_ext or ext in video_ext:
+        return FileResponse(str(target))
+    # Force download with explicit filename for archives/others
+    return FileResponse(str(target), filename=target.name, media_type="application/octet-stream")

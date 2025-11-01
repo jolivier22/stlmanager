@@ -338,3 +338,86 @@ def tags_reindex_incremental():
     conn.commit()
     conn.close()
     return {"added": added, "total": len(existing)}
+
+
+@router.get("/detail")
+def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un projet (depuis folder_index)")):
+    # Sécurité: le chemin doit exister dans l'index pour être autorisé
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT name, path, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path
+        FROM folder_index
+        WHERE path = ?
+        """,
+        (path,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    base = dict(row)
+    base["tags"] = _split_tags_csv(base.get("tags"))
+    counts = {
+        "images": base.pop("images"),
+        "gifs": base.pop("gifs"),
+        "videos": base.pop("videos"),
+        "archives": base.pop("archives"),
+        "stls": base.pop("stls"),
+    }
+
+    # Scan du dossier cible uniquement pour lister les médias
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Chemin du projet invalide")
+
+    images: list[str] = []
+    gifs: list[str] = []
+    videos: list[str] = []
+    archives: list[str] = []
+    stls: list[str] = []
+    others: list[str] = []
+    ignore_names = {"Thumbs.db", "desktop.ini"}
+    try:
+        for e in os.scandir(folder_path):
+            if not e.is_file():
+                continue
+            name = e.name
+            if name.startswith('.') or name in ignore_names:
+                continue
+            ext = Path(name).suffix.lower()
+            rel = name  # nom de fichier relatif au dossier
+            if ext in IMAGE_EXT:
+                images.append(rel)
+            elif ext in GIF_EXT:
+                gifs.append(rel)
+            elif ext in VIDEO_EXT:
+                videos.append(rel)
+            elif ext in ARCHIVE_EXT:
+                archives.append(rel)
+            elif ext == ".stl":
+                stls.append(rel)
+            else:
+                others.append(rel)
+    except PermissionError:
+        pass
+
+    # Héro: miniature si dispo, sinon première image
+    hero = base.get("thumbnail_path")
+    if not hero and images:
+        hero = str(folder_path / images[0])
+
+    return {
+        **base,
+        "counts": counts,
+        "media": {
+            "images": images,
+            "gifs": gifs,
+            "videos": videos,
+            "archives": archives,
+            "stls": stls,
+            "others": others,
+        },
+        "hero": hero,
+    }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from 'react'
 import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search } from 'lucide-react'
 
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8091'
@@ -21,7 +21,7 @@ type Folder = {
 
 export default function App() {
   const [health, setHealth] = useState<string>('loading...')
-  const [view, setView] = useState<'home' | 'settings'>(() => (localStorage.getItem('stlm.view') as any) || 'home')
+  const [view, setView] = useState<'home' | 'settings' | 'detail'>(() => (localStorage.getItem('stlm.view') as any) || 'home')
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -43,6 +43,7 @@ export default function App() {
   const [autoInc, setAutoInc] = useState<boolean>(() => localStorage.getItem('stlm.autoInc') === '1')
   const [autoIncSec, setAutoIncSec] = useState<number>(() => Number(localStorage.getItem('stlm.autoIncSec') || '30'))
   const [lastIncStatus, setLastIncStatus] = useState<string>('')
+  const [autoRefreshAfterReindex, setAutoRefreshAfterReindex] = useState<boolean>(() => localStorage.getItem('stlm.autoRefreshAfterReindex') === '1')
   // Tags catalog states
   const [tagsQ, setTagsQ] = useState<string>('')
   const [tagsLoading, setTagsLoading] = useState<boolean>(false)
@@ -51,8 +52,13 @@ export default function App() {
   const [autoTagsInc, setAutoTagsInc] = useState<boolean>(() => localStorage.getItem('stlm.autoTagsInc') === '1')
   const [autoTagsSec, setAutoTagsSec] = useState<number>(() => Number(localStorage.getItem('stlm.autoTagsSec') || '60'))
   const [lastTagsStatus, setLastTagsStatus] = useState<string>('')
+  // Detail view state
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [detail, setDetail] = useState<any | null>(null)
 
   const query = useMemo(() => q.trim(), [q])
+
+  const fileUrl = (p?: string | null) => p ? `${API_BASE}/files?path=${encodeURIComponent(p)}` : ''
 
   const loadFolders = async () => {
     setLoading(true)
@@ -67,7 +73,13 @@ export default function App() {
       const d = await r.json()
       const items: Folder[] = d.items ?? []
       setFolders(items)
-      setTotal(Number(d.total ?? items.length))
+      const newTotal = Number(d.total ?? items.length)
+      setTotal(newTotal)
+      // Clamp current page to last page if total shrank
+      const newTotalPages = Math.max(1, Math.ceil(newTotal / Math.max(1, limit)))
+      if (page > newTotalPages) {
+        setPage(newTotalPages)
+      }
     } catch (e) {
       setFolders([])
       setTotal(0)
@@ -105,7 +117,9 @@ export default function App() {
       const r = await fetch(`${API_BASE}/folders/reindex-incremental`, { method: 'POST' })
       const d = await r.json()
       setLastIncStatus(`Incrémental: +${d.added} / ~${d.updated} mis à jour / -${d.removed} supprimés / ${d.skipped} inchangés`)
-      await loadFolders()
+      if (autoRefreshAfterReindex && view === 'home') {
+        await loadFolders()
+      }
     } catch {
       setLastIncStatus('Erreur reindex incrémental')
     }
@@ -150,6 +164,23 @@ export default function App() {
     }
   }
 
+  const openDetail = async (path: string) => {
+    setSelectedPath(path)
+    setView('detail')
+  }
+
+  const loadDetail = async (path: string) => {
+    try {
+      const url = new URL(`${API_BASE}/folders/detail`)
+      url.searchParams.set('path', path)
+      const r = await fetch(url.toString())
+      const d = await r.json()
+      setDetail(d)
+    } catch {
+      setDetail(null)
+    }
+  }
+
   useEffect(() => {
     fetch(`${API_BASE}/health`)
       .then(r => r.json())
@@ -169,6 +200,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem('stlm.sort', sort) }, [sort])
   useEffect(() => { localStorage.setItem('stlm.order', order) }, [order])
   useEffect(() => { localStorage.setItem('stlm.limit', String(limit)) }, [limit])
+  useEffect(() => { localStorage.setItem('stlm.autoRefreshAfterReindex', autoRefreshAfterReindex ? '1' : '0') }, [autoRefreshAfterReindex])
   useEffect(() => { localStorage.setItem('stlm.autoTagsInc', autoTagsInc ? '1' : '0') }, [autoTagsInc])
   useEffect(() => { localStorage.setItem('stlm.autoTagsSec', String(autoTagsSec)) }, [autoTagsSec])
 
@@ -198,6 +230,14 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, tagsQ])
 
+  // Load detail when entering detail view
+  useEffect(() => {
+    if (view === 'detail' && selectedPath) {
+      loadDetail(selectedPath)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, selectedPath])
+
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
   return (
@@ -208,7 +248,7 @@ export default function App() {
           <div className="w-6 h-6 rounded bg-zinc-700" />
           STLManager
         </div>
-        <NavItem icon={<Home size={18} />} label="Accueil" active={view==='home'} onClick={() => { setView('home'); setPage(1) }} />
+        <NavItem icon={<Home size={18} />} label="Accueil" active={view==='home'} onClick={() => { setView('home') }} />
         <NavItem icon={<Tags size={18} />} label="Tags" />
         <NavItem icon={<Star size={18} />} label="Favoris" />
         <div className="mt-auto" />
@@ -225,7 +265,7 @@ export default function App() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
               <input
                 value={q}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
                 placeholder="Recherche projets (nom, chemin)"
                 className="w-full pl-9 pr-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
               />
@@ -279,8 +319,8 @@ export default function App() {
               <div className="text-zinc-200 mb-4">Total dossiers: {total}</div>
 
           <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {folders.map(f => (
-              <div key={f.path} className="border border-zinc-800 rounded-lg p-3 bg-zinc-900">
+            {folders.map((f: Folder) => (
+              <button key={f.path} onClick={() => openDetail(f.path)} className="text-left border border-zinc-800 rounded-lg p-3 bg-zinc-900 hover:border-zinc-700">
                 {/* Titre */}
                 <div className="font-semibold text-zinc-100 mb-2 truncate" title={f.name}>{f.name}</div>
                 {/* Miniature (hauteur 250px, ratio 3:4 portrait) */}
@@ -289,48 +329,31 @@ export default function App() {
                   style={{ aspectRatio: '3 / 4' }}
                 >
                   {f.thumbnail_path ? (
-                    <img
-                      src={`${API_BASE}/files?path=${encodeURIComponent(f.thumbnail_path)}`}
-                      alt={f.name}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
+                    <img src={fileUrl(f.thumbnail_path)} loading="lazy" alt={f.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-zinc-800" />
                   )}
                 </div>
-                {/* Rating */}
-                {typeof f.rating === 'number' && (
-                  <div className="mt-2 text-amber-400 text-sm" aria-label={`note ${f.rating}/5`}>
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <span key={i}>{i < (f.rating ?? 0) ? '★' : '☆'}</span>
-                    ))}
-                  </div>
-                )}
-                {/* Tags */}
-                {f.tags && f.tags.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {f.tags.map((t, idx) => (
-                      <span key={idx} className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-200 border border-zinc-700">{t}</span>
-                    ))}
-                  </div>
-                )}
-                {f.counts && (
-                  <div className="mt-2 text-xs text-zinc-300 flex flex-wrap gap-2">
-                    <span>img: {f.counts.images}</span>
-                    <span>gif: {f.counts.gifs}</span>
-                    <span>vid: {f.counts.videos}</span>
-                    <span>zip: {f.counts.archives}</span>
-                    <span>stl: {f.counts.stls}</span>
-                  </div>
-                )}
-              </div>
+                {/* Tags + Note */}
+                <div className="mt-3 flex items-center justify-between">
+                  {f.tags && f.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {f.tags.map((t: string, idx: number) => (
+                        <span key={idx} className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-200 border border-zinc-700">{t}</span>
+                      ))}
+                    </div>
+                  )}
+                  {typeof f.rating === 'number' && (
+                    <div className="text-amber-400 text-sm" aria-label={`note ${f.rating}/5`}>
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <span key={i}>{i < (f.rating ?? 0) ? '★' : '☆'}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </button>
             ))}
-            {!loading && folders.length === 0 && (
-              <div className="text-zinc-400">Aucun dossier trouvé.</div>
-            )}
           </div>
-
           {/* Pagination */}
           <div className="mt-6 flex items-center justify-between text-sm text-zinc-300">
             <div>
@@ -351,7 +374,114 @@ export default function App() {
             </div>
           </div>
         </>
-          ) : (
+          ) : view === 'detail' ? (
+            /* Detail view */
+            <div>
+              <button onClick={() => setView('home')} className="mb-4 px-3 py-1.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-100">← Retour</button>
+              {detail ? (
+                <div>
+                  {/* Hero section */}
+                  <div className="relative mb-6">
+                    {detail.hero && (
+                      <img src={fileUrl(detail.hero)} alt="hero" className="w-full h-56 sm:h-72 md:h-80 object-cover opacity-30" />
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 to-transparent" />
+                    <div className="absolute bottom-3 left-4 right-4 flex gap-4 items-end">
+                      <div className="w-32 sm:w-40 md:w-48 aspect-[3/4] overflow-hidden rounded border border-zinc-700 bg-zinc-900">
+                        {detail.thumbnail_path ? (
+                          <img src={fileUrl(detail.thumbnail_path)} alt={detail.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full bg-zinc-800" />
+                        )}
+                      </div>
+                      <div className="pb-1">
+                        <div className="text-2xl font-semibold text-zinc-100">{detail.name}</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(detail.tags ?? []).map((t: string, i: number) => (
+                            <span key={i} className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-200 border border-zinc-700">{t}</span>
+                          ))}
+                        </div>
+                        {typeof detail.rating === 'number' && (
+                          <div className="mt-2 text-amber-400">{'★★★★★'.slice(0, detail.rating)}{'☆☆☆☆☆'.slice(detail.rating)}</div>
+                        )}
+                        <div className="mt-2 text-sm text-zinc-400">
+                          Images: {detail.counts?.images} · GIFs: {detail.counts?.gifs} · Vidéos: {detail.counts?.videos} · Archives: {detail.counts?.archives} · STLs: {detail.counts?.stls}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Gallery */}
+                  {detail.media?.images?.length ? (
+                    <div className="mb-6">
+                      <div className="mb-2 text-zinc-200 font-medium">Images</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {detail.media.images.map((fn: string, i: number) => (
+                          <img key={i} src={fileUrl(`${detail.path}/${fn}`)} loading="lazy" className="w-full h-32 object-cover rounded border border-zinc-700 bg-zinc-900" />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Videos */}
+                  {detail.media?.videos?.length ? (
+                    <div className="mb-6">
+                      <div className="mb-2 text-zinc-200 font-medium">Vidéos</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {detail.media.videos.map((fn: string, i: number) => (
+                          <a key={i} href={fileUrl(`${detail.path}/${fn}`)} target="_blank" className="h-32 rounded border border-zinc-700 bg-zinc-900 flex items-center justify-center text-zinc-300 text-sm">
+                            🎬 {fn}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Archives */}
+                  {detail.media?.archives?.length ? (
+                    <div className="mb-6">
+                      <div className="mb-2 text-zinc-200 font-medium">Archives</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {detail.media.archives.map((fn: string, i: number) => (
+                          <a key={i} href={fileUrl(`${detail.path}/${fn}`)} target="_blank" className="h-32 rounded border border-zinc-700 bg-zinc-900 flex items-center justify-center text-zinc-300 text-sm">
+                            📦 {fn}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* STL list (names only) */}
+                  {detail.media?.stls?.length ? (
+                    <div className="mb-6">
+                      <div className="mb-2 text-zinc-200 font-medium">Fichiers STL</div>
+                      <ul className="list-disc list-inside text-sm text-zinc-300">
+                        {detail.media.stls.map((fn: string, i: number) => (
+                          <li key={i}>{fn}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {/* Others */}
+                  {detail.media?.others?.length ? (
+                    <div className="mb-6">
+                      <div className="mb-2 text-zinc-200 font-medium">Autres fichiers</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {detail.media.others.map((fn: string, i: number) => (
+                          <a key={i} href={fileUrl(`${detail.path}/${fn}`)} target="_blank" className="h-32 rounded border border-zinc-700 bg-zinc-900 flex items-center justify-center text-zinc-300 text-sm">
+                            📄 {fn}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-zinc-400">Chargement…</div>
+              )}
+            </div>
+          ) : view === 'settings' ? (
             /* Settings view */
             <div className="max-w-2xl">
               <h2 className="text-lg font-semibold mb-3">Configuration</h2>
@@ -381,6 +511,13 @@ export default function App() {
                 {lastIncStatus && (
                   <div className="text-sm text-zinc-400">{lastIncStatus}</div>
                 )}
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" checked={autoRefreshAfterReindex} onChange={(e) => setAutoRefreshAfterReindex(e.target.checked)} />
+                    Rafraîchir la liste après réindexation
+                  </label>
+                  <span className="text-xs text-zinc-500">(évite les retours intempestifs de page)</span>
+                </div>
 
                 <hr className="border-zinc-800" />
                 <h3 className="text-md font-semibold">Catalogue de tags</h3>
@@ -421,14 +558,14 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
           </div>
       </main>
     </div>
   )
 }
 
-function NavItem({ icon, label, active = false, onClick }: { icon: React.ReactNode; label: string; active?: boolean; onClick?: () => void }) {
+function NavItem({ icon, label, active = false, onClick }: { icon: ReactNode; label: string; active?: boolean; onClick?: () => void }) {
   return (
     <button
       onClick={onClick}

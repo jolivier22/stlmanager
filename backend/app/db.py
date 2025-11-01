@@ -50,5 +50,35 @@ def init_db() -> None:
         );
         """
     )
+    # Cache index for folders (projects-dossiers)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS folder_index (
+            path TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            rel TEXT NOT NULL,
+            mtime REAL,
+            images INTEGER DEFAULT 0,
+            gifs INTEGER DEFAULT 0,
+            videos INTEGER DEFAULT 0,
+            archives INTEGER DEFAULT 0,
+            stls INTEGER DEFAULT 0,
+            tags TEXT,
+            rating INTEGER,
+            thumbnail_path TEXT
+        );
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_name ON folder_index(name)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_mtime ON folder_index(mtime)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_rating ON folder_index(rating)")
+    # Global tags catalog (unique tag names)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tag_catalog (
+            name TEXT PRIMARY KEY
+        );
+        """
+    )
     conn.commit()
     conn.close()

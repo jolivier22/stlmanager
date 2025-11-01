@@ -342,6 +342,42 @@ def set_folder_preview(
     return {"ok": True, "thumbnail_path": thumb_path}
 
 
+@router.post("/set-rating")
+def set_folder_rating(
+    path: str = Query(..., description="Chemin absolu du projet (dossier)"),
+    rating: int = Query(..., ge=0, le=5, description="Note entière entre 0 et 5"),
+):
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    # Update meta JSON
+    meta_path = folder_path / ".stl_collect.json"
+    meta: dict = {}
+    if meta_path.exists() and meta_path.is_file():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception:
+            meta = {}
+    meta["rating"] = int(rating)
+    try:
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur écriture meta: {e}")
+    # Update index
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE folder_index SET rating = ? WHERE path = ?", (int(rating), path))
+        # keep tag_catalog untouched here
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+    return {"ok": True, "rating": int(rating)}
+
+
 def _split_tags_csv(s: str | None) -> list[str]:
     if not s:
         return []

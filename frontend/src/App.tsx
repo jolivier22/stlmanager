@@ -363,6 +363,26 @@ export default function App() {
     } catch {}
   }
 
+  const setRating = async (value: number) => {
+    if (!detail?.path) return
+    const rating = Math.max(0, Math.min(5, Math.floor(value)))
+    // optimistic update
+    setDetail((prev: any) => prev ? { ...prev, rating } : prev)
+    setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, rating } : f) : prev))
+    try {
+      const url = new URL(`${API_BASE}/folders/set-rating`)
+      url.search = `path=${encodeURIComponent(detail.path)}&rating=${encodeURIComponent(String(rating))}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      if (!r.ok) {
+        // revert on failure
+        const d = await r.text()
+        console.error('[rating] error', r.status, d)
+      }
+    } catch (e) {
+      console.error('[rating] exception', e)
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
   return (
@@ -563,9 +583,27 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                        {typeof detail.rating === 'number' && (
-                          <div className="mt-2 text-amber-400">{'★★★★★'.slice(0, detail.rating)}{'☆☆☆☆☆'.slice(detail.rating)}</div>
-                        )}
+                        <div className="mt-2 text-amber-400 flex items-center gap-1">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <button
+                              key={i}
+                              className="leading-none"
+                              onClick={() => setRating(i + 1)}
+                              aria-label={`Noter ${i + 1}/5`}
+                              title={`Noter ${i + 1}/5`}
+                            >
+                              {i < (Number(detail.rating) || 0) ? '★' : '☆'}
+                            </button>
+                          ))}
+                          <button
+                            className="ml-2 px-1 py-0.5 rounded border border-zinc-700 text-xs text-zinc-200 hover:bg-zinc-800"
+                            onClick={() => setRating(0)}
+                            aria-label="Effacer la note"
+                            title="Effacer la note"
+                          >
+                            Effacer
+                          </button>
+                        </div>
                         <div className="mt-2 text-sm text-zinc-400">
                           Images: {detail.counts?.images} · GIFs: {detail.counts?.gifs} · Vidéos: {detail.counts?.videos} · Archives: {detail.counts?.archives} · STLs: {detail.counts?.stls}
                         </div>

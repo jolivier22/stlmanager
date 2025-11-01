@@ -89,9 +89,12 @@ def list_folders(
     offset = (page - 1) * limit
     cur.execute(
         f"""
-        SELECT name, path, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path
-        FROM folder_index
-        {where_clause}
+        SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
+               fi.tags, fi.rating,
+               COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
+        FROM folder_index fi
+        LEFT JOIN preview_overrides po ON po.path = fi.path
+        {where_clause.replace('FROM folder_index', 'FROM folder_index fi LEFT JOIN preview_overrides po ON po.path = fi.path') if where_clause else ''}
         ORDER BY {order_by}
         LIMIT ? OFFSET ?
         """,
@@ -143,7 +146,11 @@ def _build_folder_record(fpath: Path):
             except Exception:
                 rating = None
             thumbnail_name = (
-                meta.get("thumbnail") or meta.get("cover") or meta.get("image") or meta.get("preview")
+                meta.get("thumbnail")
+                or meta.get("cover")
+                or meta.get("image")
+                or meta.get("preview")
+                or meta.get("preview_file")
             )
             if isinstance(thumbnail_name, str):
                 candidate = fpath / thumbnail_name
@@ -277,6 +284,64 @@ def reindex_folders_incremental():
     return {"added": added, "updated": updated, "removed": removed, "skipped": skipped}
 
 
+@router.post("/set-preview")
+def set_folder_preview(
+    path: str = Query(..., description="Chemin absolu du projet (dossier)"),
+    filename: str = Query(..., description="Nom de fichier (relatif au dossier) à utiliser comme miniature"),
+):
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    target = folder_path / filename
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=400, detail="Fichier non trouvé dans le dossier")
+    ext = target.suffix.lower()
+    if ext not in IMAGE_EXT and ext not in GIF_EXT:
+        raise HTTPException(status_code=400, detail="Le fichier doit être une image ou un GIF")
+
+    # Écrire/mettre à jour le fichier meta
+    meta_path = folder_path / ".stl_collect.json"
+    meta: dict = {}
+    if meta_path.exists() and meta_path.is_file():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception:
+            meta = {}
+    meta["preview_file"] = filename
+    try:
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception:
+        # Ignore write errors (e.g., read-only volume); we'll persist in DB overrides below
+        pass
+
+    # Mettre à jour l'index
+    thumb_path = str(target)
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        # Ensure overrides table exists (safety in case migration not applied yet)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS preview_overrides (
+                path TEXT PRIMARY KEY,
+                thumbnail_path TEXT
+            );
+            """
+        )
+        # Update cache for immediate effect
+        cur.execute("UPDATE folder_index SET thumbnail_path = ? WHERE path = ?", (thumb_path, path))
+        # Also store user override so it persists even if JSON can't be written
+        cur.execute("INSERT OR REPLACE INTO preview_overrides(path, thumbnail_path) VALUES(?, ?)", (path, thumb_path))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index/override: {e}")
+
+    return {"ok": True, "thumbnail_path": thumb_path}
+
+
 def _split_tags_csv(s: str | None) -> list[str]:
     if not s:
         return []
@@ -347,9 +412,12 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT name, path, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path
-        FROM folder_index
-        WHERE path = ?
+        SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
+               fi.tags, fi.rating,
+               COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
+        FROM folder_index fi
+        LEFT JOIN preview_overrides po ON po.path = fi.path
+        WHERE fi.path = ?
         """,
         (path,),
     )

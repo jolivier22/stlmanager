@@ -80,5 +80,14 @@ def init_db() -> None:
         );
         """
     )
+    # User overrides for folder preview thumbnail
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS preview_overrides (
+            path TEXT PRIMARY KEY,
+            thumbnail_path TEXT
+        );
+        """
+    )
     conn.commit()
     conn.close()

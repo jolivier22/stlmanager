@@ -55,6 +55,8 @@ export default function App() {
   // Detail view state
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [detail, setDetail] = useState<any | null>(null)
+  // Scroll preservation for Home list
+  const [homeScrollY, setHomeScrollY] = useState<number>(0)
   // Lightbox state
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(0)
@@ -168,6 +170,7 @@ export default function App() {
   }
 
   const openDetail = async (path: string) => {
+    try { setHomeScrollY(window.scrollY || window.pageYOffset || 0) } catch {}
     setSelectedPath(path)
     setView('detail')
   }
@@ -241,6 +244,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, selectedPath])
 
+  // Restore scroll when returning to home
+  useEffect(() => {
+    if (view === 'home') {
+      try { window.scrollTo(0, homeScrollY) } catch {}
+    }
+  }, [view, homeScrollY])
+
   // Lightbox keyboard navigation
   useEffect(() => {
     if (!lightboxOpen) return
@@ -262,6 +272,31 @@ export default function App() {
   const closeLightbox = () => setLightboxOpen(false)
   const nextLightbox = () => detail?.media?.images?.length ? setLightboxIndex(i => (i + 1) % detail.media.images.length) : null
   const prevLightbox = () => detail?.media?.images?.length ? setLightboxIndex(i => (i - 1 + detail.media.images.length) % detail.media.images.length) : null
+
+  const setFolderPreview = async (filename: string) => {
+    if (!detail?.path) return
+    try {
+      console.log('[preview] set', { path: detail.path, filename })
+      const url = new URL(`${API_BASE}/folders/set-preview`)
+      // Force strict encoding so '+' becomes %2B
+      url.search = `path=${encodeURIComponent(detail.path)}&filename=${encodeURIComponent(filename)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      const text = await r.text()
+      let d: any = undefined
+      try { d = text ? JSON.parse(text) : undefined } catch { /* non-json */ }
+      if (!r.ok) {
+        console.error('[preview] error', r.status, text)
+        return
+      }
+      console.log('[preview] ok', d)
+      if (d?.thumbnail_path) {
+        setDetail((prev: any) => prev ? { ...prev, thumbnail_path: d.thumbnail_path, hero: d.thumbnail_path } : prev)
+        setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, thumbnail_path: d.thumbnail_path } : f) : prev))
+      }
+    } catch (err) {
+      console.error('[preview] exception', err)
+    }
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
@@ -452,7 +487,15 @@ export default function App() {
                             className="relative group w-full h-32 overflow-hidden rounded border border-zinc-700 bg-zinc-900 cursor-pointer"
                           >
                             <img src={fileUrl(`${detail.path}/${fn}`)} loading="lazy" className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(i)} />
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors cursor-pointer" onClick={() => openLightbox(i)} />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
+                            <button
+                              className="absolute top-1 right-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 text-xs rounded bg-zinc-900/80 text-zinc-100 border border-zinc-700"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFolderPreview(fn) }}
+                              aria-label="Définir comme miniature"
+                              title="Définir comme miniature"
+                            >
+                              Définir
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -482,6 +525,26 @@ export default function App() {
                     </div>
                   ) : null}
 
+                  {/* GIFs */}
+                  {detail.media?.gifs?.length ? (
+                    <div className="mb-6">
+                      <div className="mb-2 text-zinc-200 font-medium">GIFs</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {detail.media.gifs.map((fn: string, i: number) => (
+                          <a
+                            key={i}
+                            href={fileUrl(`${detail.path}/${fn}`)}
+                            target="_blank"
+                            className="relative group w-full h-32 overflow-hidden rounded border border-zinc-700 bg-zinc-900"
+                            title={fn}
+                          >
+                            <img src={fileUrl(`${detail.path}/${fn}`)} loading="lazy" className="w-full h-full object-cover" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Videos */}
                   {detail.media?.videos?.length ? (
                     <div className="mb-6">
@@ -492,11 +555,25 @@ export default function App() {
                             key={i}
                             href={fileUrl(`${detail.path}/${fn}`)}
                             target="_blank"
-                            className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-2 p-2 text-zinc-300 text-sm"
+                            className="h-32 rounded border border-zinc-700 bg-zinc-900 text-zinc-300 text-sm overflow-hidden"
                             title={fn}
                           >
-                            <span className="text-2xl" aria-hidden>🎬</span>
-                            <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-center">{fn}</span>
+                            <div className="relative w-full h-full">
+                              <video
+                                src={fileUrl(`${detail.path}/${fn}`)}
+                                muted
+                                loop
+                                playsInline
+                                preload="metadata"
+                                className="w-full h-full object-cover"
+                                onMouseOver={(e) => { try { (e.currentTarget as HTMLVideoElement).play() } catch {} }}
+                                onMouseOut={(e) => { try { (e.currentTarget as HTMLVideoElement).pause() } catch {} }}
+                                autoPlay
+                              />
+                              <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5 text-[10px] sm:text-xs text-zinc-200 truncate">
+                                {fn}
+                              </div>
+                            </div>
                           </a>
                         ))}
                       </div>

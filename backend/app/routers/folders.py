@@ -200,28 +200,39 @@ def reindex_folders():
     # Clear existing index
     cur.execute("DELETE FROM folder_index")
     added = 0
+    failed = 0
     try:
         for entry in os.scandir(root_path):
-            if not entry.is_dir():
+            try:
+                if not entry.is_dir():
+                    continue
+                if entry.name.startswith('.'):
+                    continue
+                fpath = Path(entry.path)
+                rec = _build_folder_record(fpath)
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO folder_index
+                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path)
+                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path)
+                    """,
+                    rec,
+                )
+                added += 1
+            except PermissionError:
                 continue
-            if entry.name.startswith('.'):
-                continue
-            fpath = Path(entry.path)
-            rec = _build_folder_record(fpath)
-            cur.execute(
-                """
-                INSERT OR REPLACE INTO folder_index
-                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path)
-                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path)
-                """,
-                rec,
-            )
-            added += 1
+            except Exception as e:
+                # Minimal logging to diagnose problematic folders, but do not fail the whole reindex
+                try:
+                    print(f"[reindex] skip '{entry.path}': {e}")
+                except Exception:
+                    pass
+                failed += 1
     except PermissionError:
         pass
     conn.commit()
     conn.close()
-    return {"indexed": added}
+    return {"indexed": added, "failed": failed}
 
 
 @router.post("/reindex-incremental")

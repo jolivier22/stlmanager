@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 import json
 from ..db import get_connection
+import shutil
 
 router = APIRouter()
 
@@ -637,6 +638,7 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
     gifs: list[str] = []
     videos: list[str] = []
     archives: list[str] = []
+    archive_sizes: dict[str, int] = {}
     stls: list[str] = []
     others: list[str] = []
     ignore_names = {"Thumbs.db", "desktop.ini"}
@@ -657,6 +659,10 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
                 videos.append(rel)
             elif ext in ARCHIVE_EXT:
                 archives.append(rel)
+                try:
+                    archive_sizes[rel] = int(e.stat().st_size)
+                except Exception:
+                    pass
             elif ext == ".stl":
                 stls.append(rel)
             else:
@@ -679,6 +685,9 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
             "archives": archives,
             "stls": stls,
             "others": others,
+        },
+        "media_sizes": {
+            "archives": archive_sizes,
         },
         "hero": hero,
     }
@@ -771,3 +780,43 @@ def delete_file(file: str = Query(..., description="Chemin absolu du fichier à 
         "thumbnail_path": rec.get("thumbnail_path"),
         "hero": hero,
     }
+
+
+@router.post("/delete-project")
+def delete_project(path: str = Query(..., description="Chemin absolu du projet (dossier) à supprimer")):
+    """Supprime un dossier projet ENTIER sous COLLECTION_ROOT et nettoie l'index DB.
+    Attention: ne supprime PAS la collection complète, uniquement le dossier cible.
+    """
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    root_path = Path(root).resolve()
+    target = Path(path).resolve()
+    try:
+        target.relative_to(root_path)
+    except Exception:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    # Sécurité: empêcher la suppression de la racine collection
+    if target == root_path:
+        raise HTTPException(status_code=400, detail="Suppression de la collection interdite")
+
+    # Suppression FS récursive
+    try:
+        shutil.rmtree(target)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur suppression dossier: {e}")
+
+    # Nettoyage DB
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM folder_index WHERE path = ?", (str(target),))
+        cur.execute("DELETE FROM preview_overrides WHERE path = ?", (str(target),))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur nettoyage index: {e}")
+
+    return {"ok": True, "removed": str(target)}

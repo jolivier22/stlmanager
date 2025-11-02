@@ -14,7 +14,6 @@ type Folder = {
     archives: number
     stls: number
   }
-
   tags?: string[]
   rating?: number | null
   thumbnail_path?: string | null
@@ -86,6 +85,14 @@ export default function App() {
   const query = useMemo(() => q.trim(), [q])
 
   const fileUrl = (p?: string | null) => p ? `${API_BASE}/files?path=${encodeURIComponent(p)}` : ''
+  const formatBytes = (n?: number) => {
+    if (!n || n <= 0) return ''
+    const units = ['B','KB','MB','GB','TB']
+    let i = 0
+    let val = n
+    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++ }
+    return `${val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2)} ${units[i]}`
+  }
 
   const loadFolders = async () => {
     setLoading(true)
@@ -489,6 +496,26 @@ export default function App() {
     }
   }
 
+  const deleteProject = async () => {
+    if (!detail?.path) return
+    try {
+      const url = new URL(`${API_BASE}/folders/delete-project`)
+      url.search = `path=${encodeURIComponent(detail.path)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      if (!r.ok) {
+        pushToast('Erreur suppression du projet', 'error')
+        return
+      }
+      pushToast('Projet supprimé', 'success')
+      setFolders((prev: any[]) => Array.isArray(prev) ? prev.filter((f: any) => f.path !== detail.path) : prev)
+      setDetail(null)
+      setView('home')
+      await loadFolders()
+    } catch (e) {
+      pushToast('Erreur suppression du projet', 'error')
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
   return (
@@ -686,6 +713,16 @@ export default function App() {
                             >
                               <Pencil size={14} />
                               Renommer
+                            </button>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); openConfirm(`Supprimer le projet "${detail.name}" ?\nCette action est définitive.`, () => deleteProject()) }}
+                              className="px-2 py-1 rounded text-xs bg-red-600 hover:bg-red-500 text-white border border-red-700 inline-flex items-center gap-1"
+                              title="Supprimer le projet"
+                            >
+                              <Trash2 size={14} />
+                              Supprimer
                             </button>
                           </div>
                         )}
@@ -888,11 +925,12 @@ export default function App() {
                             key={i}
                             href={fileUrl(`${detail.path}/${fn}`)}
                             download={fn}
-                            className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-2 p-2 text-zinc-300 text-sm"
+                            className="h-32 rounded border border-zinc-700 bg-zinc-900 flex flex-col items-center justify-center gap-1 p-2 text-zinc-300 text-sm"
                             title={fn}
                           >
                             <span className="text-2xl" aria-hidden>📦</span>
                             <span className="w-full overflow-hidden text-ellipsis whitespace-nowrap text-xs text-center">{fn}</span>
+                            <span className="text-[10px] text-zinc-400">{formatBytes(detail.media_sizes?.archives?.[fn])}</span>
                           </a>
                         ))}
                       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from 'react'
-import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, Pencil } from 'lucide-react'
+import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, Pencil, Trash2 } from 'lucide-react'
 
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8091'
 
@@ -14,6 +14,7 @@ type Folder = {
     archives: number
     stls: number
   }
+
   tags?: string[]
   rating?: number | null
   thumbnail_path?: string | null
@@ -74,6 +75,10 @@ export default function App() {
       setToasts((prev) => prev.filter(t => t.id !== id))
     }, 3000)
   }
+  const [confirmMsg, setConfirmMsg] = useState<string | null>(null)
+  const [confirmAct, setConfirmAct] = useState<(() => void) | null>(null)
+  const openConfirm = (msg: string, act: () => void) => { setConfirmMsg(msg); setConfirmAct(() => act) }
+  const closeConfirm = () => { setConfirmMsg(null); setConfirmAct(null) }
   // Lightbox state
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(0)
@@ -85,7 +90,7 @@ export default function App() {
   const loadFolders = async () => {
     setLoading(true)
     try {
-      const url = new URL(`${API_BASE}/folders`)
+      const url = new URL(`${API_BASE}/folders/`)
       url.searchParams.set('sort', sort)
       url.searchParams.set('order', order)
       url.searchParams.set('page', String(page))
@@ -445,6 +450,45 @@ export default function App() {
     }
   }
 
+  const deleteImage = async (filename: string) => {
+    if (!detail?.path) return
+    const abs = `${detail.path}/${filename}`
+    try {
+      // Optimistic UI: remove from grid immediately
+      setDetail((prev: any) => prev ? {
+        ...prev,
+        media: { ...prev.media, images: (prev.media?.images || []).filter((x: string) => x !== filename) }
+      } : prev)
+
+      const url = new URL(`${API_BASE}/folders/delete-file`)
+      url.search = `file=${encodeURIComponent(abs)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        pushToast('Erreur lors de la suppression', 'error')
+        await openDetail(detail.path)
+        return
+      }
+      // Sync counts/thumbnail/hero from server response
+      setDetail((prev: any) => prev ? {
+        ...prev,
+        counts: d?.counts ? { ...prev.counts, ...d.counts } : prev.counts,
+        thumbnail_path: d?.thumbnail_path ?? prev.thumbnail_path,
+        hero: d?.hero ?? prev.hero,
+      } : prev)
+      setFolders((prev: any[]) => Array.isArray(prev) ? prev.map((f: any) => f.path === detail.path ? {
+        ...f,
+        counts: d?.counts ? { ...f.counts, ...d.counts } : f.counts,
+        thumbnail_path: d?.thumbnail_path ?? f.thumbnail_path,
+      } : f) : prev)
+      pushToast('Image supprimée', 'success')
+    } catch (e) {
+      console.error('[delete-file] exception', e)
+      pushToast('Erreur lors de la suppression', 'error')
+      await openDetail(detail.path)
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
   return (
@@ -740,6 +784,16 @@ export default function App() {
                             >
                               Définir
                             </button>
+                            <button
+                              className="absolute top-1 left-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-zinc-900/80 text-red-200 border border-red-700"
+                              onMouseDown={(e) => { e.stopPropagation() }}
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); openConfirm(`Supprimer l'image "${fn}" ?`, () => deleteImage(fn)) }}
+                              aria-label="Supprimer l'image"
+                              title="Supprimer l'image"
+                              type="button"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -962,22 +1016,40 @@ export default function App() {
           ) : null}
           </div>
       </main>
-      {/* Toasts container */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 items-end">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={
-              `px-3 py-2 rounded-md shadow border text-sm transition-all duration-300 ` +
-              (t.type==='success' ? 'bg-emerald-900/80 border-emerald-700 text-emerald-100' :
-               t.type==='error' ? 'bg-red-900/80 border-red-700 text-red-100' :
-               'bg-zinc-900/80 border-zinc-700 text-zinc-100')
-            }
-          >
-            {t.text}
+        {/* Toasts container */}
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 items-end">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className={
+                `px-3 py-2 rounded-md shadow border text-sm transition-all duration-300 ` +
+                (t.type==='success' ? 'bg-emerald-900/80 border-emerald-700 text-emerald-100' :
+                 t.type==='error' ? 'bg-red-900/80 border-red-700 text-red-100' :
+                 'bg-zinc-900/80 border-zinc-700 text-zinc-100')
+              }
+            >
+              {t.text}
+            </div>
+          ))}
+        </div>
+        {/* Confirm panel */}
+        {confirmMsg && (
+          <div className="fixed bottom-20 right-4 z-50 w-[300px] rounded-md border border-zinc-700 bg-zinc-900/95 text-zinc-100 shadow-lg p-3 animate-in fade-in zoom-in">
+            <div className="text-sm mb-3">{confirmMsg}</div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700"
+                onClick={closeConfirm}
+              >Annuler</button>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-500 text-white"
+                onClick={() => { const fn = confirmAct; closeConfirm(); fn && fn() }}
+              >Supprimer</button>
+            </div>
           </div>
-        ))}
-      </div>
+        )}
     </div>
   )
 }

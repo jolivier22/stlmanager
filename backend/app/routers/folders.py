@@ -60,13 +60,15 @@ def list_folders(
 ):
     conn = get_connection()
     cur = conn.cursor()
-    where = []
+    # WHERE clauses: one for total (no alias), one for page query (with alias 'fi')
     params: list[object] = []
+    where_clause_total = ""
+    where_clause_page = ""
     if q:
-        where.append("(LOWER(name) LIKE ? OR LOWER(path) LIKE ?)")
         like = f"%{q.lower()}%"
-        params.extend([like, like])
-    where_clause = (" WHERE " + " AND ".join(where)) if where else ""
+        params = [like, like]
+        where_clause_total = " WHERE (LOWER(name) LIKE ? OR LOWER(path) LIKE ?)"
+        where_clause_page = " WHERE (LOWER(fi.name) LIKE ? OR LOWER(fi.path) LIKE ?)"
 
     sort_map = {
         "name": "name",
@@ -82,7 +84,7 @@ def list_folders(
         order_by = f"{s} {o}"
 
     # Total
-    cur.execute(f"SELECT COUNT(*) FROM folder_index{where_clause}", params)
+    cur.execute(f"SELECT COUNT(*) FROM folder_index{where_clause_total}", params)
     total = cur.fetchone()[0]
 
     # Page
@@ -94,7 +96,7 @@ def list_folders(
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path
-        {where_clause.replace('FROM folder_index', 'FROM folder_index fi LEFT JOIN preview_overrides po ON po.path = fi.path') if where_clause else ''}
+        {where_clause_page}
         ORDER BY {order_by}
         LIMIT ? OFFSET ?
         """,
@@ -678,5 +680,94 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
             "stls": stls,
             "others": others,
         },
+        "hero": hero,
+    }
+
+
+@router.post("/delete-file")
+def delete_file(file: str = Query(..., description="Chemin absolu du fichier à supprimer (sous COLLECTION_ROOT)")):
+    """Supprime un fichier média dans un projet et met à jour l'index.
+    - file: chemin absolu du fichier (construit côté front avec detail.path + '/' + filename)
+    Retourne les compteurs mis à jour et la miniature potentiellement recalculée.
+    """
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    root_path = Path(root).resolve()
+
+    target = Path(file).resolve()
+    # Sécurité: limiter aux fichiers sous la racine collection
+    try:
+        target.relative_to(root_path)
+    except Exception:
+        raise HTTPException(status_code=403, detail="Accès refusé")
+
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
+
+    folder_path = target.parent
+    # Supprimer le fichier
+    try:
+        target.unlink()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur suppression fichier: {e}")
+
+    # Mettre à jour l'index pour le dossier parent
+    try:
+        rec = _build_folder_record(folder_path)
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO folder_index(path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(path) DO UPDATE SET
+              name=excluded.name,
+              rel=excluded.rel,
+              mtime=excluded.mtime,
+              images=excluded.images,
+              gifs=excluded.gifs,
+              videos=excluded.videos,
+              archives=excluded.archives,
+              stls=excluded.stls,
+              tags=excluded.tags,
+              rating=COALESCE(folder_index.rating, excluded.rating),
+              thumbnail_path=excluded.thumbnail_path
+            """,
+            (
+                rec["path"], rec["name"], rec["rel"], rec["mtime"], rec["images"], rec["gifs"], rec["videos"], rec["archives"], rec["stls"], rec["tags"], rec["rating"], rec["thumbnail_path"],
+            ),
+        )
+        # Si une preview_override pointait sur ce fichier supprimé, l'effacer
+        cur.execute("DELETE FROM preview_overrides WHERE path = ? AND thumbnail_path = ?", (str(folder_path), str(target)))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+
+    # Recalculer hero (miniature effective): override si existe, sinon folder_index.thumbnail_path, sinon première image
+    hero = rec.get("thumbnail_path")
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT thumbnail_path FROM preview_overrides WHERE path = ?", (str(folder_path),))
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0]:
+            hero = row[0]
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "path": str(folder_path),
+        "counts": {
+            "images": rec["images"],
+            "gifs": rec["gifs"],
+            "videos": rec["videos"],
+            "archives": rec["archives"],
+            "stls": rec["stls"],
+        },
+        "thumbnail_path": rec.get("thumbnail_path"),
         "hero": hero,
     }

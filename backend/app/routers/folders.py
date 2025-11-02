@@ -378,6 +378,68 @@ def set_folder_rating(
     return {"ok": True, "rating": int(rating)}
 
 
+@router.post("/rename")
+def rename_folder(
+    path: str = Query(..., description="Chemin absolu du projet (dossier) à renommer"),
+    new_name: str = Query(..., description="Nouveau nom du dossier (basename uniquement)"),
+):
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    new_name = (new_name or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Nouveau nom invalide")
+    if any(ch in new_name for ch in ['/', '\\', ':', '*', '?', '"', '<', '>', '|']):
+        raise HTTPException(status_code=400, detail="Nom contient des caractères interdits")
+    new_path = folder_path.parent / new_name
+    # Si un dossier homonyme existe déjà, on refuse (l'utilisateur ajoutera un suffixe v2/v3)
+    if new_path.exists() and new_path.resolve() != folder_path.resolve():
+        raise HTTPException(status_code=409, detail="Un dossier avec ce nom existe déjà")
+
+    # Effectuer le renommage sur le système de fichiers
+    try:
+        folder_path.rename(new_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur renommage FS: {e}")
+
+    # Mettre à jour l'index (path, rel, name) et les chemins éventuels de miniature
+    root = os.getenv("COLLECTION_ROOT") or "/"
+    root_path = Path(root).resolve()
+    try:
+        new_rel = str(Path(new_path).resolve().relative_to(root_path))
+    except Exception:
+        new_rel = new_name
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        # Mettre à jour l'entrée principale
+        cur.execute(
+            "UPDATE folder_index SET path = ?, rel = ?, name = ? WHERE path = ?",
+            (str(new_path), new_rel, new_name, str(folder_path)),
+        )
+        # Mettre à jour les éventuelles miniatures qui stockeraient un chemin absolu
+        try:
+            cur.execute(
+                "UPDATE folder_index SET thumbnail_path = REPLACE(COALESCE(thumbnail_path,''), ?, ?) WHERE thumbnail_path LIKE ?",
+                (str(folder_path) + os.sep, str(new_path) + os.sep, f"{str(folder_path)}%"),
+            )
+        except Exception:
+            pass
+        # Mettre à jour les overrides
+        try:
+            cur.execute("UPDATE preview_overrides SET path = ? WHERE path = ?", (str(new_path), str(folder_path)))
+        except Exception:
+            pass
+        conn.commit()
+        conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+
+    return {"ok": True, "path": str(new_path), "name": new_name, "rel": new_rel}
+
+
 def _split_tags_csv(s: str | None) -> list[str]:
     if not s:
         return []

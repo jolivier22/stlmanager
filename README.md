@@ -131,3 +131,47 @@ Tu explores ta collection dans le navigateur.
 Tu ajoutes des tags, génères des miniatures, etc.
 
 Les prochaines ouvertures sont quasi instantanées, sans rescanner.
+
+## Déploiement NAS (ex. OpenMediaVault / Raspberry Pi)
+
+Collez ce docker-compose dans l'UI Docker du NAS (ou en fichier), en adaptant les chemins absolus:
+
+```yaml
+services:
+  api:
+    build:
+      context: /home/pi/docker/stlmanager/backend
+      dockerfile: Dockerfile
+    container_name: stlmanager-api
+    user: "1000:1000"
+    environment:
+      - CACHE_DB_PATH=/app/data/cache.db
+      - COLLECTION_ROOT=/mnt/CollectionSTL
+      - TZ=Europe/Paris
+    volumes:
+      - /home/pi/docker/stlmanager/data:/app/data
+      - /srv/dev-disk-by-uuid-b31fd667-2222-40ee-9777-6780017602eb/Fichiers3D:/mnt/CollectionSTL:rw
+    ports:
+      - "8091:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: /home/pi/docker/stlmanager/frontend
+      dockerfile: Dockerfile
+    container_name: stlmanager-web
+    environment:
+      - VITE_API_URL=http://<IP_DU_NAS>:8091
+      - TZ=Europe/Paris
+    ports:
+      - "8090:80"
+    restart: unless-stopped
+```
+
+Notes:
+- Remplacez `<IP_DU_NAS>` par l'adresse IP du NAS.
+- Créez le dossier persistant: `mkdir -p /home/pi/docker/stlmanager/data` et assurez les droits UID/GID 1000.
+- Accès: Web `http://<IP_DU_NAS>:8090`, API `http://<IP_DU_NAS>:8091`.
+- Dans l'UI: Configuration → Scanner (index complet).
+
+Pour le développement Windows, utilisez le `docker-compose.yml` du dépôt (montage CIFS vers le partage réseau, variables `SMB_USER`/`SMB_PASS`).

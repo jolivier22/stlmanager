@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from 'react'
-import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search } from 'lucide-react'
+import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, Pencil } from 'lucide-react'
 
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8091'
 
@@ -60,6 +60,20 @@ export default function App() {
   const [newTag, setNewTag] = useState<string>('')
   const [tagSugs, setTagSugs] = useState<string[]>([])
   const [tagSugsLoading, setTagSugsLoading] = useState<boolean>(false)
+  // Rename state
+  const [renameEditing, setRenameEditing] = useState<boolean>(false)
+  const [renameInput, setRenameInput] = useState<string>('')
+  const [renaming, setRenaming] = useState<boolean>(false)
+  // Toasts (bottom-right)
+  type Toast = { id: number, type: 'info' | 'success' | 'error', text: string }
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const pushToast = (text: string, type: Toast['type'] = 'info') => {
+    const id = Date.now() + Math.floor(Math.random()*1000)
+    setToasts((prev) => [...prev, { id, type, text }])
+    setTimeout(() => {
+      setToasts((prev) => prev.filter(t => t.id !== id))
+    }, 3000)
+  }
   // Lightbox state
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(0)
@@ -383,6 +397,54 @@ export default function App() {
     }
   }
 
+  const doRename = async () => {
+    if (!detail?.path) return
+    const new_name = (renameInput || '').trim()
+    if (!new_name || new_name === detail.name) { setRenameEditing(false); return }
+    setRenaming(true)
+    const oldPath = detail.path
+    try {
+      const url = new URL(`${API_BASE}/folders/rename`)
+      url.search = `path=${encodeURIComponent(detail.path)}&new_name=${encodeURIComponent(new_name)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        if (r.status === 409) {
+          pushToast('Ce nom existe déjà', 'error')
+        } else {
+          pushToast('Erreur lors du renommage', 'error')
+        }
+        return
+      }
+      const newPath = d?.path || `${oldPath.substring(0, oldPath.lastIndexOf('/'))}/${new_name}`
+      const newRel = d?.rel || undefined
+      const fixPath = (p?: string | null) => (p && p.startsWith(oldPath)) ? (newPath + p.slice(oldPath.length)) : p
+      setDetail((prev: any) => prev ? {
+        ...prev,
+        name: new_name,
+        path: newPath,
+        rel: newRel ?? prev.rel,
+        thumbnail_path: fixPath(prev.thumbnail_path),
+        hero: fixPath(prev.hero)
+      } : prev)
+      setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === oldPath ? {
+        ...f,
+        name: new_name,
+        path: newPath,
+        rel: newRel ?? f.rel,
+        thumbnail_path: fixPath(f.thumbnail_path)
+      } : f) : prev))
+      setSelectedPath(newPath)
+      setRenameEditing(false)
+      pushToast('Nom mis à jour', 'success')
+    } catch (e) {
+      console.error('[rename] exception', e)
+      pushToast('Erreur lors du renommage', 'error')
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
   return (
@@ -540,7 +602,49 @@ export default function App() {
                         )}
                       </div>
                       <div className="pb-1">
-                        <div className="text-2xl font-semibold text-zinc-100">{detail.name}</div>
+                        {renameEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              onMouseDown={(e) => e.stopPropagation()}
+                              autoFocus
+                              value={renameInput}
+                              onChange={(e) => setRenameInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') doRename()
+                                if (e.key === 'Escape') { setRenameEditing(false); setRenameInput('') }
+                              }}
+                              className="px-2 py-1 rounded text-sm bg-zinc-900 text-zinc-100 border border-zinc-700"
+                              placeholder="Nouveau nom du projet"
+                            />
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={doRename}
+                              disabled={renaming}
+                              className="px-2 py-1 rounded text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 disabled:opacity-50"
+                            >OK</button>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={() => { setRenameEditing(false); setRenameInput('') }}
+                              className="px-2 py-1 rounded text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700"
+                            >Annuler</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <div className="text-2xl font-semibold text-zinc-100">{detail.name}</div>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={() => { setRenameEditing(true); setRenameInput(detail.name || '') }}
+                              className="px-2 py-1 rounded text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 inline-flex items-center gap-1"
+                              title="Renommer le projet"
+                            >
+                              <Pencil size={14} />
+                              Renommer
+                            </button>
+                          </div>
+                        )}
                         <div className="mt-2 flex flex-wrap gap-1 items-center">
                           {Array.isArray(detail.tags) && detail.tags.map((t: string, i: number) => (
                             <button
@@ -858,6 +962,22 @@ export default function App() {
           ) : null}
           </div>
       </main>
+      {/* Toasts container */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 items-end">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={
+              `px-3 py-2 rounded-md shadow border text-sm transition-all duration-300 ` +
+              (t.type==='success' ? 'bg-emerald-900/80 border-emerald-700 text-emerald-100' :
+               t.type==='error' ? 'bg-red-900/80 border-red-700 text-red-100' :
+               'bg-zinc-900/80 border-zinc-700 text-zinc-100')
+            }
+          >
+            {t.text}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

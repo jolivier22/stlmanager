@@ -175,3 +175,14 @@ Notes:
 - Dans l'UI: Configuration → Scanner (index complet).
 
 Pour le développement Windows, utilisez le `docker-compose.yml` du dépôt (montage CIFS vers le partage réseau, variables `SMB_USER`/`SMB_PASS`).
+
+## Conseils déploiement
+
+Pour les prochaines mises à jour sur le NAS:
+
+```bash
+docker compose down
+git pull --rebase
+docker compose build --no-cache --build-arg VITE_API_URL=http://192.168.1.13:8091 web
+docker compose up -d api web
+# Puis, dans le navigateur: Ctrl+F5 (hard refresh)

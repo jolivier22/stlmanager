@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from 'react'
-import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, Pencil, Trash2 } from 'lucide-react'
+import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, Pencil, Trash2, ArrowUp } from 'lucide-react'
 
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8091'
 
@@ -518,6 +518,23 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(total / Math.max(1, limit)))
 
+  const pagesToShow = useMemo((): (number | string)[] => {
+    const pages: (number | string)[] = []
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+      return pages
+    }
+    const addRange = (a: number, b: number) => { for (let i = a; i <= b; i++) pages.push(i) }
+    const left = Math.max(2, page - 1)
+    const right = Math.min(totalPages - 1, page + 1)
+    pages.push(1)
+    if (left > 2) pages.push('…')
+    addRange(left, right)
+    if (right < totalPages - 1) pages.push('…')
+    pages.push(totalPages)
+    return pages
+  }, [page, totalPages])
+
   return (
     <div className="min-h-screen flex font-sans">
       {/* Sidebar */}
@@ -529,9 +546,9 @@ export default function App() {
         <NavItem icon={<Home size={18} />} label="Accueil" active={view==='home'} onClick={() => { setView('home') }} />
         <NavItem icon={<Tags size={18} />} label="Tags" />
         <NavItem icon={<Star size={18} />} label="Favoris" />
-        <div className="mt-auto" />
         <NavItem icon={<BarChart3 size={18} />} label="Statistiques" />
         <NavItem icon={<Settings size={18} />} label="Configuration" active={view==='settings'} onClick={() => setView('settings')} />
+        <div className="mt-auto" />
       </aside>
 
       {/* Main */}
@@ -596,6 +613,37 @@ export default function App() {
             <>
               <div className="text-zinc-200 mb-4">Total dossiers: {total}</div>
 
+          <div className="mb-4 flex items-center justify-between text-sm text-zinc-300">
+            <div>
+              Page {page} / {totalPages}
+              <span className="ml-2 text-zinc-500">({Math.min((page-1)*limit+1, total)}–{Math.min(page*limit, total)} sur {total})</span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                className="px-3 py-1.5 rounded-md bg-zinc-800 disabled:opacity-50 border border-zinc-700"
+                disabled={page <= 1}
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+              >Précédent</button>
+              {pagesToShow.map((p, i) => (
+                typeof p === 'number' ? (
+                  <button
+                    key={i}
+                    className={`px-3 py-1.5 rounded-md border ${p===page ? 'bg-zinc-700 border-zinc-600 text-zinc-100' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'}`}
+                    onClick={() => setPage(p)}
+                    disabled={p === page}
+                  >{p}</button>
+                ) : (
+                  <span key={i} className="px-2">{p}</span>
+                )
+              ))}
+              <button
+                className="px-3 py-1.5 rounded-md bg-zinc-800 disabled:opacity-50 border border-zinc-700"
+                disabled={page >= totalPages}
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              >Suivant</button>
+            </div>
+          </div>
+
           <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {folders.map((f: Folder) => (
               <button key={f.path} onClick={() => openDetail(f.path)} className="text-left border border-zinc-800 rounded-lg p-3 bg-zinc-900 hover:border-zinc-700">
@@ -632,18 +680,30 @@ export default function App() {
               </button>
             ))}
           </div>
-          {/* Pagination */}
+          {/* Pagination (bottom) */}
           <div className="mt-6 flex items-center justify-between text-sm text-zinc-300">
             <div>
               Page {page} / {totalPages}
               <span className="ml-2 text-zinc-500">({Math.min((page-1)*limit+1, total)}–{Math.min(page*limit, total)} sur {total})</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 className="px-3 py-1.5 rounded-md bg-zinc-800 disabled:opacity-50 border border-zinc-700"
                 disabled={page <= 1}
                 onClick={() => setPage(p => Math.max(1, p - 1))}
               >Précédent</button>
+              {pagesToShow.map((p, i) => (
+                typeof p === 'number' ? (
+                  <button
+                    key={i}
+                    className={`px-3 py-1.5 rounded-md border ${p===page ? 'bg-zinc-700 border-zinc-600 text-zinc-100' : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'}`}
+                    onClick={() => setPage(p)}
+                    disabled={p === page}
+                  >{p}</button>
+                ) : (
+                  <span key={i} className="px-2">{p}</span>
+                )
+              ))}
               <button
                 className="px-3 py-1.5 rounded-md bg-zinc-800 disabled:opacity-50 border border-zinc-700"
                 disabled={page >= totalPages}
@@ -1070,6 +1130,19 @@ export default function App() {
             </div>
           ))}
         </div>
+        {/* Back to top button (home view) */}
+        {view === 'home' && (
+          <button
+            type="button"
+            className="fixed bottom-20 right-4 z-40 px-3 py-2 rounded-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-100 shadow inline-flex items-center gap-2"
+            aria-label="Haut de page"
+            title="Haut de page"
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          >
+            <ArrowUp size={16} />
+            Haut
+          </button>
+        )}
         {/* Confirm panel */}
         {confirmMsg && (
           <div className="fixed bottom-20 right-4 z-50 w-[300px] rounded-md border border-zinc-700 bg-zinc-900/95 text-zinc-100 shadow-lg p-3 animate-in fade-in zoom-in">

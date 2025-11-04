@@ -562,8 +562,11 @@ export default function App() {
                 value={q}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
                 placeholder="Recherche projets (nom, chemin)"
-                className="w-full pl-9 pr-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                className="w-full pl-9 pr-8 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
               />
+              {loading && (
+                <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 animate-spin" size={16} />
+              )}
             </div>
             {/* Sort controls */}
             <select
@@ -596,9 +599,6 @@ export default function App() {
               <option value="48">48</option>
               <option value="96">96</option>
             </select>
-            <button onClick={loadFolders} disabled={loading} className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700">
-              {loading ? 'Recherche…' : 'Rechercher'}
-            </button>
             <button onClick={doScan} disabled={scanning} className="px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2">
               <RefreshCw size={16} className={scanning ? 'animate-spin' : ''} />
               {scanning ? 'Scan…' : 'Scanner'}
@@ -608,9 +608,11 @@ export default function App() {
 
         {/* Content */}
         <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="text-sm text-zinc-400 mb-3">Backend: {health} · API: {API_BASE}</div>
           {view === 'home' ? (
             <>
+              {(health !== 'ok' && health !== 'loading...') && (
+                <div className="mb-3 text-sm text-red-400">Backend indisponible (status: {String(health)}). Vérifiez l’API: {API_BASE}</div>
+              )}
               <div className="text-zinc-200 mb-4">Total dossiers: {total}</div>
 
           <div className="mb-4 flex items-center justify-between text-sm text-zinc-300">

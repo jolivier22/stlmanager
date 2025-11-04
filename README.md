@@ -9,7 +9,7 @@ Elle fonctionne un peu comme Plex ou Jellyfin, mais pour les fichiers 3D : elle 
 
 Lors du premier lancement, STLManager te demande le dossier racine où sont stockés tes fichiers STL (ex : un dossier partagé SMB du NAS).
 
-L’application analyse récursivement ce dossier et crée un fichier JSON pour chaque projet (si non existant).
+L’application analyse le dossier et crée un fichier JSON par projet (si non existant).
 
 Chaque JSON contient les métadonnées du projet :
 
@@ -24,14 +24,18 @@ Liste de tags (si ajoutés plus tard)
 Miniature (si définie ultérieurement)
 
 👉 Si un JSON existe déjà, il est simplement chargé et mis à jour si besoin.
+👉 Le JSON par projet constitue la source utilisateur pour la miniature, la note (rating) et les tags; ces informations sont également répercutées dans l’index SQLite pour accélérer l’affichage.
 
 🗃️ 2. Base de données interne (cache SQLite)
 
-Tous les projets scannés sont indexés dans une base SQLite locale (/home/pi/docker/stlmanager/cache/cache.db).
+Tous les projets (dossiers) sont indexés dans une base SQLite locale (/home/pi/docker/stlmanager/cache/cache.db) dans une table de cache `folder_index`.
 
-Ce cache permet un affichage instantané sans rescanner le dossier à chaque fois.
+Ce cache alimente la grille de listing (pagination/tri/recherche) sans rescanner les dossiers à chaque fois. La réindexation des dossiers se fait via des actions explicites:
 
-Le scan ne se relance que sur demande ou si l’utilisateur ajoute un nouveau projet.
+- `POST /folders/reindex` (index complet) — parcourt uniquement le 1er niveau de `COLLECTION_ROOT`.
+- `POST /folders/reindex-incremental` (index incrémental) — met à jour les entrées modifiées.
+
+À part, un scan récursif des fichiers `.stl` existe via `POST /scan` pour alimenter la table `projects` (routeur `/projects`). Il est distinct du cache `folder_index` utilisé par la grille des dossiers.
 
 💻 3. Interface web moderne
 
@@ -131,6 +135,11 @@ Tu explores ta collection dans le navigateur.
 Tu ajoutes des tags, génères des miniatures, etc.
 
 Les prochaines ouvertures sont quasi instantanées, sans rescanner.
+
+ℹ️ Notes importantes
+
+- Miniature effective (priorité): override utilisateur `preview_overrides` (si défini via l’action “Définir comme miniature”) > miniature de `folder_index` (issue du JSON ou de la première image trouvée) > première image du dossier.
+- Profondeur de scan: la réindexation de dossiers (`/folders/reindex*`) parcourt uniquement le 1er niveau sous `COLLECTION_ROOT`. Le scan `/scan` pour la table `projects` est récursif et séparé.
 
 ## Déploiement NAS (ex. OpenMediaVault / Raspberry Pi)
 

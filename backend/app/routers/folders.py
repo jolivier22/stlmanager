@@ -52,6 +52,27 @@ def count_media(folder: Path):
     return images, gifs, videos, archives, stls, max_mtime
 
 
+def _created_at_from_images(folder: Path) -> str | None:
+    try:
+        min_ctime: float | None = None
+        for entry in os.scandir(folder):
+            if entry.is_file():
+                ext = Path(entry.name).suffix.lower()
+                if ext in IMAGE_EXT or ext in GIF_EXT:
+                    try:
+                        ct = entry.stat().st_ctime
+                        if isinstance(ct, (int, float)):
+                            if min_ctime is None or ct < min_ctime:
+                                min_ctime = ct
+                    except Exception:
+                        continue
+        if min_ctime is not None:
+            return datetime.fromtimestamp(min_ctime).isoformat()
+    except PermissionError:
+        pass
+    return None
+
+
 @router.get("/")
 def list_folders(
     sort: str = Query("name", description="Tri: name|date|rating|created|modified"),
@@ -192,7 +213,9 @@ def _build_folder_record(fpath: Path):
                 pass
         except Exception:
             pass
-    # Fallback for created_at: folder creation time if missing
+    # Fallback for created_at: earliest image/gif ctime, else folder ctime
+    if not created_at:
+        created_at = _created_at_from_images(fpath)
     if not created_at:
         try:
             created_at = datetime.fromtimestamp(fpath.stat().st_ctime).isoformat()
@@ -365,8 +388,13 @@ def set_folder_preview(
     # Ensure dates
     try:
         if not meta.get("added_at"):
-            ctime = folder_path.stat().st_ctime
-            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+            created = _created_at_from_images(folder_path)
+            if not created:
+                try:
+                    created = datetime.fromtimestamp(folder_path.stat().st_ctime).isoformat()
+                except Exception:
+                    created = None
+            meta["added_at"] = created or datetime.now().isoformat()
     except Exception:
         meta["added_at"] = datetime.now().isoformat()
     meta["modified_at"] = datetime.now().isoformat()
@@ -733,8 +761,13 @@ def fix_tags_all():
         # Ensure dates
         try:
             if not meta.get("added_at"):
-                ctime = folder_path.stat().st_ctime
-                meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+                created = _created_at_from_images(folder_path)
+                if not created:
+                    try:
+                        created = datetime.fromtimestamp(folder_path.stat().st_ctime).isoformat()
+                    except Exception:
+                        created = None
+                meta["added_at"] = created or datetime.now().isoformat()
         except Exception:
             meta["added_at"] = datetime.now().isoformat()
         meta["modified_at"] = datetime.now().isoformat()

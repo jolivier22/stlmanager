@@ -54,20 +54,21 @@ def count_media(folder: Path):
 
 def _created_at_from_images(folder: Path) -> str | None:
     try:
-        min_ctime: float | None = None
+        min_time: float | None = None
         for entry in os.scandir(folder):
             if entry.is_file():
                 ext = Path(entry.name).suffix.lower()
                 if ext in IMAGE_EXT or ext in GIF_EXT:
                     try:
-                        ct = entry.stat().st_ctime
-                        if isinstance(ct, (int, float)):
-                            if min_ctime is None or ct < min_ctime:
-                                min_ctime = ct
+                        # Use modification time instead of ctime (ctime is change time on Linux/CIFS)
+                        mt = entry.stat().st_mtime
+                        if isinstance(mt, (int, float)):
+                            if min_time is None or mt < min_time:
+                                min_time = mt
                     except Exception:
                         continue
-        if min_ctime is not None:
-            return datetime.fromtimestamp(min_ctime).isoformat()
+        if min_time is not None:
+            return datetime.fromtimestamp(min_time).isoformat()
     except PermissionError:
         pass
     return None

@@ -972,16 +972,6 @@ export default function App() {
                               <Trash2 size={14} />
                               Supprimer
                             </button>
-                            <button
-                              type="button"
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={fixTagsForCurrent}
-                              disabled={fixBusy}
-                              className="px-2 py-1 rounded text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 inline-flex items-center gap-1 disabled:opacity-50"
-                              title="Corriger les tags du JSON"
-                            >
-                              {fixBusy ? 'Correction…' : 'Corriger tags'}
-                            </button>
                           </div>
                         )}
                         <div className="mt-2 flex flex-wrap gap-1 items-center">
@@ -1050,6 +1040,11 @@ export default function App() {
                         <div className="mt-2 text-sm text-zinc-400">
                           Images: {detail.counts?.images} · GIFs: {detail.counts?.gifs} · Vidéos: {detail.counts?.videos} · Archives: {detail.counts?.archives} · STLs: {detail.counts?.stls}
                         </div>
+                        {detail.created_at && (
+                          <div className="mt-1 text-sm text-zinc-400">
+                            Date d'ajout : {new Date(detail.created_at).toLocaleString()}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

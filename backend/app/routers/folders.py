@@ -1051,7 +1051,7 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
     cur.execute(
         """
         SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
-               fi.tags, fi.rating,
+               fi.tags, fi.rating, fi.created_at, fi.modified_at,
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path

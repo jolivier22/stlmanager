@@ -800,7 +800,9 @@ def fix_tags_all():
 
 
 @router.post("/backfill-dates-all")
-def backfill_dates_all():
+def backfill_dates_all(
+    force_created: bool = Query(False, alias="force_created", description="Forcer la mise à jour de added_at depuis la plus ancienne image/GIF")
+):
     root = os.getenv("COLLECTION_ROOT")
     if not root:
         raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
@@ -829,21 +831,39 @@ def backfill_dates_all():
 
         before = json.dumps(meta, sort_keys=True, ensure_ascii=False)
 
-        # Ensure added_at
-        try:
+        # Compute desired created_at from earliest image/GIF, fallback to folder ctime, then now
+        desired_created: str | None = _created_at_from_images(folder_path)
+        if not desired_created:
+            try:
+                desired_created = datetime.fromtimestamp(folder_path.stat().st_ctime).isoformat()
+            except Exception:
+                desired_created = None
+        if not desired_created:
+            desired_created = datetime.now().isoformat()
+
+        # Set added_at
+        if force_created:
+            meta["added_at"] = desired_created
+        else:
             if not meta.get("added_at"):
-                ctime = folder_path.stat().st_ctime
-                meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
-        except Exception:
-            if not meta.get("added_at"):
-                meta["added_at"] = datetime.now().isoformat()
+                meta["added_at"] = desired_created
 
         # Ensure modified_at only if missing
         if not meta.get("modified_at"):
             meta["modified_at"] = datetime.now().isoformat()
 
         after = json.dumps(meta, sort_keys=True, ensure_ascii=False)
-        if before == after:
+        if not force_created and before == after:
+            # Nothing to write and not forcing
+            # But still ensure DB has created_at if missing
+            try:
+                conn = get_connection()
+                cur = conn.cursor()
+                cur.execute("UPDATE folder_index SET created_at = COALESCE(created_at, ?) WHERE path = ?", (meta.get("added_at"), str(folder_path)))
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
             continue
 
         # backup

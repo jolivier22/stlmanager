@@ -192,6 +192,10 @@ Pour les prochaines mises à jour sur le NAS:
 ```bash
 docker compose down
 git pull --rebase
+docker compose build --no-cache api
 docker compose build --no-cache --build-arg VITE_API_URL=http://192.168.1.13:8091 web
 docker compose up -d api web
-# Puis, dans le navigateur: Ctrl+F5 (hard refresh)
+# Navigateur: Ctrl+F5
+
+# Pour relancer apres modif
+docker compose up -d --build api web

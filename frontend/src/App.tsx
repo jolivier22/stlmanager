@@ -64,6 +64,8 @@ export default function App() {
   const [lastTagsStatus, setLastTagsStatus] = useState<string>('')
   const [fixAllBusy, setFixAllBusy] = useState<boolean>(false)
   const [fixAllStatus, setFixAllStatus] = useState<string>('')
+  const [uploadBusy, setUploadBusy] = useState<boolean>(false)
+  const [uploadPct, setUploadPct] = useState<number>(0)
   // Detail view state
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [detail, setDetail] = useState<any | null>(null)
@@ -195,6 +197,60 @@ export default function App() {
     } catch {
       setLastIncStatus('Erreur reindex incrémental')
     }
+  }
+
+  const doUploadProject = () => {
+    if (uploadBusy) return
+    const input = document.createElement('input')
+    input.type = 'file'
+    ;(input as any).webkitdirectory = true
+    input.multiple = true
+    input.onchange = async () => {
+      const files = Array.from(input.files || [])
+      if (!files.length) return
+      setUploadBusy(true)
+      setUploadPct(0)
+      try {
+        const fd = new FormData()
+        for (const f of files) {
+          const rel = (f as any).webkitRelativePath || f.name
+          fd.append('files', f, rel)
+        }
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', `${API_BASE}/folders/upload`)
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const p = Math.max(0, Math.min(100, Math.round((e.loaded / e.total) * 100)))
+            setUploadPct(p)
+          }
+        }
+        const done = new Promise<Response>((resolve) => {
+          xhr.onreadystatechange = () => {
+            if (xhr.readyState === 4) {
+              resolve(new Response(xhr.response, { status: xhr.status, statusText: xhr.statusText }))
+            }
+          }
+        })
+        xhr.send(fd)
+        const r = await done
+        const txt = await r.text()
+        let d: any = {}
+        try { d = txt ? JSON.parse(txt) : {} } catch {}
+        if (!r.ok) {
+          pushToast(`Upload échoué (${r.status})`, 'error')
+        } else {
+          pushToast(`Upload terminé: ${Number(d?.written ?? files.length)} fichiers`, 'success')
+          setPage(1)
+          await loadFolders()
+        }
+      } catch {
+        pushToast('Erreur upload', 'error')
+      } finally {
+        setUploadBusy(false)
+        setUploadPct(0)
+      }
+    }
+    input.click()
   }
 
   const loadTagsCatalog = async () => {
@@ -668,7 +724,7 @@ export default function App() {
       {/* Sidebar */}
       <aside className="w-64 bg-zinc-900 border-r border-zinc-800 p-4 hidden md:flex flex-col gap-2">
         <div className="flex items-center gap-2 text-zinc-100 text-lg font-semibold mb-4">
-          <div className="w-6 h-6 rounded bg-zinc-700" />
+          <img src="/android-chrome-192x192.png" alt="STLManager" className="w-6 h-6 rounded" />
           STLManager
         </div>
         <NavItem icon={<Home size={18} />} label="Accueil" active={view==='home'} onClick={() => { setView('home') }} />
@@ -808,6 +864,9 @@ export default function App() {
               <option value="48">48</option>
               <option value="96">96</option>
             </select>
+            <button onClick={doUploadProject} disabled={uploadBusy} className="px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
+              {uploadBusy ? `Envoi… ${uploadPct}%` : 'Ajouter un projet'}
+            </button>
             <button onClick={doScan} disabled={scanning} className="px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2">
               <RefreshCw size={16} className={scanning ? 'animate-spin' : ''} />
               {scanning ? 'Scan…' : 'Scanner'}
@@ -999,6 +1058,53 @@ export default function App() {
                             >
                               <Trash2 size={14} />
                               Supprimer
+                            </button>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={() => {
+                                if (uploadBusy) return
+                                const input = document.createElement('input')
+                                input.type = 'file'
+                                input.multiple = true
+                                input.onchange = async () => {
+                                  const files = Array.from(input.files || [])
+                                  if (!files.length || !detail?.path) return
+                                  setUploadBusy(true)
+                                  setUploadPct(0)
+                                  try {
+                                    const fd = new FormData()
+                                    for (const f of files) fd.append('files', f, f.name)
+                                    const xhr = new XMLHttpRequest()
+                                    xhr.open('POST', `${API_BASE}/folders/upload-to?path=${encodeURIComponent(detail.path)}`)
+                                    xhr.upload.onprogress = (e) => {
+                                      if (e.lengthComputable) setUploadPct(Math.max(0, Math.min(100, Math.round((e.loaded/e.total)*100))))
+                                    }
+                                    const done = new Promise<Response>((resolve) => {
+                                      xhr.onreadystatechange = () => { if (xhr.readyState === 4) resolve(new Response(xhr.response, { status: xhr.status, statusText: xhr.statusText })) }
+                                    })
+                                    xhr.send(fd)
+                                    const r = await done
+                                    const txt = await r.text(); let d: any = {}; try { d = txt ? JSON.parse(txt) : {} } catch {}
+                                    if (!r.ok) {
+                                      pushToast(`Upload échoué (${r.status})`, 'error')
+                                    } else {
+                                      pushToast(`Ajout terminé: ${Number(d?.written ?? files.length)} fichiers (renommage si conflit)`, 'success')
+                                      await loadDetail(detail.path)
+                                    }
+                                  } catch {
+                                    pushToast('Erreur upload', 'error')
+                                  } finally {
+                                    setUploadBusy(false)
+                                    setUploadPct(0)
+                                  }
+                                }
+                                input.click()
+                              }}
+                              className="px-2 py-1 rounded text-xs bg-blue-600 hover:bg-blue-500 text-white border border-blue-700 inline-flex items-center gap-1 disabled:opacity-50"
+                              title="Ajouter des fichiers (renommage si conflit)"
+                            >
+                              {uploadBusy ? `Ajout… ${uploadPct}%` : 'Ajouter des fichiers'}
                             </button>
                           </div>
                         )}

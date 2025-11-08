@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from typing import List
 import json
 from ..db import get_connection
 import shutil
@@ -176,6 +177,179 @@ def get_disk_usage():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur récupération usage disque: {e}")
 
+
+@router.post("/upload")
+def upload_project(files: List[UploadFile] = File(...)):
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    root_path = Path(root)
+    if not root_path.exists() or not root_path.is_dir():
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT introuvable")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="Aucun fichier fourni")
+
+    written = 0
+    projects: set[str] = set()
+    now = datetime.utcnow().isoformat()
+    for up in files:
+        # Use provided filename as relative path (frontend must set webkitRelativePath)
+        rel = (up.filename or up.filename or "").strip()
+        if not rel:
+            continue
+        # Normalize and secure
+        rel_path = Path(rel)
+        # Reject absolute and parent traversal
+        if rel_path.is_absolute() or any(part in ("..", "" ) for part in rel_path.parts):
+            continue
+        target = root_path / rel_path
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "wb") as out:
+                out.write(up.file.read())
+            written += 1
+            # Track top-level project directory (first path segment)
+            parts = rel_path.parts
+            if parts:
+                projects.add(str(root_path / parts[0]))
+        except Exception:
+            continue
+
+    # Ensure metadata and index for each touched project
+    touched = 0
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        for p in projects:
+            folder = Path(p)
+            try:
+                meta_path = folder / ".stl_collect.json"
+                if not meta_path.exists():
+                    meta = {"added_at": now}
+                    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                else:
+                    try:
+                        raw = meta_path.read_text(encoding="utf-8")
+                        meta = json.loads(raw) if raw.strip() else {}
+                    except Exception:
+                        meta = {}
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    if not meta.get("added_at"):
+                        meta["added_at"] = now
+                        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+            try:
+                rec = _build_folder_record(folder)
+                cur.execute(
+                    """
+                    INSERT OR REPLACE INTO folder_index
+                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
+                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
+                    """,
+                    rec,
+                )
+                touched += 1
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    return {"written": written, "projects": list(projects), "indexed": touched}
+
+
+@router.post("/upload-to")
+def upload_to_project(path: str = Query(..., description="Chemin absolu du projet (dossier)"), files: List[UploadFile] = File(...)):
+    if not path:
+        raise HTTPException(status_code=400, detail="Paramètre path requis")
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    root_path = Path(root).resolve()
+    try:
+        if folder_path.resolve().is_relative_to(root_path) is False:  # py311
+            raise HTTPException(status_code=400, detail="Chemin hors de la collection")
+    except AttributeError:
+        if str(folder_path.resolve()).startswith(str(root_path)) is False:
+            raise HTTPException(status_code=400, detail="Chemin hors de la collection")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="Aucun fichier fourni")
+
+    def _unique_name(dst: Path) -> Path:
+        if not dst.exists():
+            return dst
+        stem = dst.stem
+        suffix = dst.suffix
+        parent = dst.parent
+        k = 1
+        while True:
+            candidate = parent / f"{stem} ({k}){suffix}"
+            if not candidate.exists():
+                return candidate
+            k += 1
+
+    written = 0
+    for up in files:
+        name = (up.filename or up.filename or "").split("/")[-1].split("\\")[-1]
+        if not name:
+            continue
+        target = folder_path / name
+        target = _unique_name(target)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "wb") as out:
+                out.write(up.file.read())
+            written += 1
+        except Exception:
+            continue
+
+    try:
+        meta_path = folder_path / ".stl_collect.json"
+        meta: dict = {}
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if not meta.get("added_at"):
+            meta["added_at"] = datetime.utcnow().isoformat()
+        meta["modified_at"] = datetime.utcnow().isoformat()
+        try:
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        rec = _build_folder_record(folder_path)
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO folder_index
+            (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
+            VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
+            """,
+            rec,
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+    return {"written": written}
 
 def _build_folder_record(fpath: Path):
     images, gifs, videos, archives, stls, folder_mtime = count_media(fpath)

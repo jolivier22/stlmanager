@@ -165,6 +165,18 @@ def list_folders(
     return {"items": items, "total": total}
 
 
+@router.get("/usage")
+def get_disk_usage():
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    try:
+        total, used, free = shutil.disk_usage(root)
+        return {"total_bytes": int(total), "used_bytes": int(used), "free_bytes": int(free)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur récupération usage disque: {e}")
+
+
 def _build_folder_record(fpath: Path):
     images, gifs, videos, archives, stls, folder_mtime = count_media(fpath)
     # metadata
@@ -272,6 +284,25 @@ def reindex_folders():
                 if entry.name.startswith('.'):
                     continue
                 fpath = Path(entry.path)
+                # Ensure metadata file exists with added_at on first index
+                try:
+                    meta_path = fpath / ".stl_collect.json"
+                    if not meta_path.exists():
+                        meta = {"added_at": datetime.utcnow().isoformat()}
+                        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                    else:
+                        try:
+                            raw = meta_path.read_text(encoding="utf-8")
+                            meta = json.loads(raw) if raw.strip() else {}
+                        except Exception:
+                            meta = {}
+                        if not isinstance(meta, dict):
+                            meta = {}
+                        if not meta.get("added_at"):
+                            meta["added_at"] = datetime.utcnow().isoformat()
+                            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
                 rec = _build_folder_record(fpath)
                 cur.execute(
                     """
@@ -326,6 +357,26 @@ def reindex_folders_incremental():
             if entry.name.startswith('.'):
                 continue
             fpath = str(Path(entry.path))
+            # Ensure metadata file exists with added_at on first index
+            try:
+                folder = Path(entry.path)
+                meta_path = folder / ".stl_collect.json"
+                if not meta_path.exists():
+                    meta = {"added_at": datetime.utcnow().isoformat()}
+                    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                else:
+                    try:
+                        raw = meta_path.read_text(encoding="utf-8")
+                        meta = json.loads(raw) if raw.strip() else {}
+                    except Exception:
+                        meta = {}
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    if not meta.get("added_at"):
+                        meta["added_at"] = datetime.utcnow().isoformat()
+                        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
             rec = _build_folder_record(Path(entry.path))
             seen_paths.add(fpath)
             prev_mtime = existing.get(fpath)

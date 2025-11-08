@@ -32,6 +32,7 @@ export default function App() {
     const v = Number(localStorage.getItem('stlm.limit') || '24')
     return [12,24,48,96].includes(v) ? v : 24
   })
+  const [usage, setUsage] = useState<{ used_bytes: number, total_bytes: number } | null>(null)
   const [sort, setSort] = useState<'name' | 'date' | 'rating' | 'created' | 'modified'>(() => {
     const v = localStorage.getItem('stlm.sort') as 'name' | 'date' | 'rating' | 'created' | 'modified' | null
     return (v === 'name' || v === 'date' || v === 'rating' || v === 'created' || v === 'modified') ? v : 'name'
@@ -106,6 +107,14 @@ export default function App() {
     return `${val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2)} ${units[i]}`
   }
 
+  // Load disk usage when entering Home view
+  useEffect(() => {
+    if (view === 'home') {
+      loadUsage()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view])
+
   const loadFolders = async () => {
     setLoading(true)
     try {
@@ -134,6 +143,20 @@ export default function App() {
       setTotal(0)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadUsage = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/folders/usage`)
+      const d = await r.json().catch(() => ({}))
+      if (r.ok && typeof d?.used_bytes === 'number' && typeof d?.total_bytes === 'number') {
+        setUsage({ used_bytes: d.used_bytes, total_bytes: d.total_bytes })
+      } else {
+        setUsage(null)
+      }
+    } catch {
+      setUsage(null)
     }
   }
 
@@ -799,7 +822,12 @@ export default function App() {
               {(health !== 'ok' && health !== 'loading...') && (
                 <div className="mb-3 text-sm text-red-400">Backend indisponible (status: {String(health)}). Vérifiez l’API: {API_BASE}</div>
               )}
-              <div className="text-zinc-200 mb-4">Total dossiers: {total}</div>
+              <div className="text-zinc-200 mb-4">
+                Total dossiers: {total}
+                {usage && (
+                  <span> ({formatBytes(usage.used_bytes)}/{formatBytes(usage.total_bytes)})</span>
+                )}
+              </div>
 
           <div className="mb-4 flex items-center justify-between text-sm text-zinc-300">
             <div>

@@ -65,13 +65,32 @@ def init_db() -> None:
             stls INTEGER DEFAULT 0,
             tags TEXT,
             rating INTEGER,
-            thumbnail_path TEXT
+            thumbnail_path TEXT,
+            created_at TEXT,
+            modified_at TEXT
         );
         """
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_name ON folder_index(name)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_mtime ON folder_index(mtime)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_rating ON folder_index(rating)")
+    # Ensure columns exist for older installs
+    try:
+        cur.execute("ALTER TABLE folder_index ADD COLUMN created_at TEXT")
+    except Exception:
+        pass
+    try:
+        cur.execute("ALTER TABLE folder_index ADD COLUMN modified_at TEXT")
+    except Exception:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_created_at ON folder_index(created_at)")
+    except Exception:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_modified_at ON folder_index(modified_at)")
+    except Exception:
+        pass
     # Global tags catalog (unique tag names)
     cur.execute(
         """

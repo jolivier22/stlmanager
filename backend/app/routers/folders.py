@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 import json
 from ..db import get_connection
 import shutil
+from datetime import datetime
 
 router = APIRouter()
 
@@ -53,28 +54,45 @@ def count_media(folder: Path):
 
 @router.get("/")
 def list_folders(
-    sort: str = Query("name", description="Tri: name|date|rating"),
+    sort: str = Query("name", description="Tri: name|date|rating|created|modified"),
     order: str = Query("asc", description="Ordre: asc|desc"),
     page: int = Query(1, ge=1, description="Numéro de page (1-based)"),
     limit: int = Query(24, ge=1, le=200, description="Taille de page"),
     q: str | None = Query(None, description="Filtre texte (nom/chemin)"),
+    tags: list[str] | None = Query(None, description="Filtre par tags (cumulatif): répétez le paramètre tags= pour chaque tag"),
 ):
     conn = get_connection()
     cur = conn.cursor()
     # WHERE clauses: one for total (no alias), one for page query (with alias 'fi')
-    params: list[object] = []
-    where_clause_total = ""
-    where_clause_page = ""
+    params_total: list[object] = []
+    params_page: list[object] = []
+    where_total_parts: list[str] = []
+    where_page_parts: list[str] = []
     if q:
         like = f"%{q.lower()}%"
-        params = [like, like]
-        where_clause_total = " WHERE (LOWER(name) LIKE ? OR LOWER(path) LIKE ?)"
-        where_clause_page = " WHERE (LOWER(fi.name) LIKE ? OR LOWER(fi.path) LIKE ?)"
+        params_total += [like, like]
+        params_page += [like, like]
+        where_total_parts.append("(LOWER(name) LIKE ? OR LOWER(path) LIKE ?)" )
+        where_page_parts.append("(LOWER(fi.name) LIKE ? OR LOWER(fi.path) LIKE ?)")
+    # Tags filtering: require each tag to be present as whole token in CSV
+    if tags:
+        for t in tags:
+            tv = (t or "").strip().lower()
+            if not tv:
+                continue
+            where_total_parts.append("(tags IS NOT NULL AND instr(',' || LOWER(tags) || ',', ',' || ? || ',') > 0)")
+            where_page_parts.append("(fi.tags IS NOT NULL AND instr(',' || LOWER(fi.tags) || ',', ',' || ? || ',') > 0)")
+            params_total.append(tv)
+            params_page.append(tv)
+    where_clause_total = (" WHERE " + " AND ".join(where_total_parts)) if where_total_parts else ""
+    where_clause_page = (" WHERE " + " AND ".join(where_page_parts)) if where_page_parts else ""
 
     sort_map = {
         "name": "name",
         "date": "mtime",
         "rating": "rating",
+        "created": "created_at",
+        "modified": "modified_at",
     }
     s = sort_map.get((sort or "name").lower(), "name")
     o = "DESC" if (order or "asc").lower() == "desc" else "ASC"
@@ -85,7 +103,7 @@ def list_folders(
         order_by = f"{s} {o}"
 
     # Total
-    cur.execute(f"SELECT COUNT(*) FROM folder_index{where_clause_total}", params)
+    cur.execute(f"SELECT COUNT(*) FROM folder_index{where_clause_total}", params_total)
     total = cur.fetchone()[0]
 
     # Page
@@ -93,7 +111,7 @@ def list_folders(
     cur.execute(
         f"""
         SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
-               fi.tags, fi.rating,
+               fi.tags, fi.rating, fi.created_at, fi.modified_at,
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path
@@ -101,7 +119,7 @@ def list_folders(
         ORDER BY {order_by}
         LIMIT ? OFFSET ?
         """,
-        [*params, limit, offset],
+        [*params_page, limit, offset],
     )
     rows = cur.fetchall()
     conn.close()
@@ -133,6 +151,8 @@ def _build_folder_record(fpath: Path):
     rating = None
     thumbnail_name = None
     thumbnail_path = None
+    created_at = None
+    modified_at = None
     if meta_path.exists() and meta_path.is_file():
         try:
             with open(meta_path, "r", encoding="utf-8") as fh:
@@ -159,8 +179,25 @@ def _build_folder_record(fpath: Path):
                 candidate = fpath / thumbnail_name
                 if candidate.exists() and candidate.is_file():
                     thumbnail_path = str(candidate)
+            # Dates
+            try:
+                if isinstance(meta.get("added_at"), str) and meta.get("added_at").strip():
+                    created_at = meta.get("added_at").strip()
+            except Exception:
+                pass
+            try:
+                if isinstance(meta.get("modified_at"), str) and meta.get("modified_at").strip():
+                    modified_at = meta.get("modified_at").strip()
+            except Exception:
+                pass
         except Exception:
             pass
+    # Fallback for created_at: folder creation time if missing
+    if not created_at:
+        try:
+            created_at = datetime.fromtimestamp(fpath.stat().st_ctime).isoformat()
+        except Exception:
+            created_at = None
     if thumbnail_path is None:
         try:
             for e in os.scandir(fpath):
@@ -183,6 +220,8 @@ def _build_folder_record(fpath: Path):
         "tags": tags_text,
         "rating": rating,
         "thumbnail_path": thumbnail_path,
+        "created_at": created_at,
+        "modified_at": modified_at,
     }
 
 
@@ -213,8 +252,8 @@ def reindex_folders():
                 cur.execute(
                     """
                     INSERT OR REPLACE INTO folder_index
-                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path)
-                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path)
+                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
+                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
                     """,
                     rec,
                 )
@@ -274,8 +313,8 @@ def reindex_folders_incremental():
             cur.execute(
                 """
                 INSERT OR REPLACE INTO folder_index
-                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path)
-                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path)
+                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
+                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
                 """,
                 rec,
             )
@@ -323,6 +362,14 @@ def set_folder_preview(
         except Exception:
             meta = {}
     meta["preview_file"] = filename
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
     try:
         with open(meta_path, "w", encoding="utf-8") as fh:
             json.dump(meta, fh, ensure_ascii=False, indent=2)
@@ -374,6 +421,14 @@ def set_folder_rating(
         except Exception:
             meta = {}
     meta["rating"] = int(rating)
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
     try:
         with open(meta_path, "w", encoding="utf-8") as fh:
             json.dump(meta, fh, ensure_ascii=False, indent=2)
@@ -460,6 +515,70 @@ def _split_tags_csv(s: str | None) -> list[str]:
     return [t.strip() for t in s.split(',') if t and t.strip()]
 
 
+def _normalize_tags(raw) -> list[str]:
+    def uniq_preserve(seq):
+        seen = set()
+        out = []
+        for x in seq:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    def try_parse_json_list(s: str):
+        try:
+            v = json.loads(s)
+            if isinstance(v, list):
+                return [str(t).strip() for t in v if str(t).strip()]
+            return None
+        except Exception:
+            return None
+
+    def strip_wrapping_quotes(s: str) -> str:
+        pairs = [("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’")]
+        changed = True
+        while changed and len(s) >= 2:
+            changed = False
+            for a, b in pairs:
+                if s.startswith(a) and s.endswith(b):
+                    s = s[len(a):-len(b)].strip()
+                    changed = True
+        # Handle escaped quotes at both ends like \"foo\"
+        if len(s) >= 4 and s.startswith('\\"') and s.endswith('\\"'):
+            s = s[2:-2].strip()
+        return s
+
+    if isinstance(raw, list):
+        joined = "".join([str(x) for x in raw])
+        if "[" in joined and "]" in joined and '\\"' in joined:
+            parsed = try_parse_json_list(joined)
+            if parsed is not None:
+                return uniq_preserve(parsed)
+        cleaned = []
+        for t in raw:
+            s = strip_wrapping_quotes(str(t).strip())
+            s = s.strip("[] ")
+            # After removing brackets, strip quotes again to catch cases like '["Tag1"'
+            s = strip_wrapping_quotes(s)
+            if s:
+                cleaned.append(s)
+        return uniq_preserve([c for c in cleaned if c])
+    if isinstance(raw, str):
+        s = raw.strip()
+        parsed = try_parse_json_list(s)
+        if parsed is not None:
+            return uniq_preserve(parsed)
+        s = s.strip("[]")
+        parts = [p.strip() for p in s.split(',')]
+        out = []
+        for p in parts:
+            p = strip_wrapping_quotes(p.strip())
+            if p:
+                out.append(p)
+        return uniq_preserve(out)
+    return []
+
+
 @router.get("/tags")
 def get_all_tags(q: str | None = Query(None, description="Filtre de préfixe/contient"), limit: int = Query(200, ge=1, le=5000)):
     conn = get_connection()
@@ -472,6 +591,250 @@ def get_all_tags(q: str | None = Query(None, description="Filtre de préfixe/con
     conn.close()
     return {"tags": tags, "total": len(tags)}
 
+
+@router.post("/fix-tags")
+def fix_tags_for_folder(path: str = Query(..., description="Chemin absolu du projet (dossier)")):
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    meta_path = folder_path / ".stl_collect.json"
+    if not meta_path.exists() or not meta_path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier .stl_collect.json introuvable dans le dossier")
+    # Read
+    try:
+        with meta_path.open("r", encoding="utf-8") as fh:
+            meta = json.load(fh) or {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lecture JSON échouée: {e}")
+    # Normalize
+    new_tags = _normalize_tags(meta.get("tags"))
+    # If nothing changes, return
+    old_repr = meta.get("tags")
+    if isinstance(old_repr, list):
+        old_list = [str(t).strip() for t in old_repr]
+        if old_list == new_tags:
+            return {"ok": True, "changed": False, "tags": new_tags}
+    # Backup
+    try:
+        bak = meta_path.with_suffix(meta_path.suffix + ".bak")
+        content = meta_path.read_text(encoding="utf-8")
+        if not bak.exists():
+            bak.write_text(content, encoding="utf-8")
+        else:
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            bak_ts = meta_path.with_suffix(meta_path.suffix + f".{ts}.bak")
+            bak_ts.write_text(content, encoding="utf-8")
+    except Exception as e:
+        # backup failure shouldn't block
+        pass
+    # Write
+    meta["tags"] = new_tags
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
+    try:
+        with meta_path.open("w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Écriture JSON échouée: {e}")
+    # Update DB
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        csv_text = ",".join(new_tags) if new_tags else None
+        cur.execute("UPDATE folder_index SET tags = ? WHERE path = ?", (csv_text, path))
+        # Update tag catalog with any new tag
+        for t in new_tags:
+            try:
+                cur.execute("INSERT OR IGNORE INTO tag_catalog(name) VALUES(?)", (t,))
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+    return {"ok": True, "changed": True, "tags": new_tags}
+
+
+@router.post("/fix-tags-all")
+def fix_tags_all():
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    root_path = Path(root)
+    if not root_path.exists() or not root_path.is_dir():
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT introuvable")
+
+    checked = 0
+    fixed = 0
+    errors: list[str] = []
+    updated_tags: set[str] = set()
+
+    for entry in os.scandir(root_path):
+        if not entry.is_dir():
+            continue
+        if entry.name.startswith('.'):
+            continue
+        folder_path = Path(entry.path)
+        meta_path = folder_path / ".stl_collect.json"
+        if not meta_path.exists() or not meta_path.is_file():
+            continue
+        checked += 1
+        try:
+            with meta_path.open("r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception as e:
+            errors.append(f"read:{meta_path}:{e}")
+            continue
+
+        new_tags = _normalize_tags(meta.get("tags"))
+        old_repr = meta.get("tags")
+        need_write = True
+        if isinstance(old_repr, list):
+            if [str(t).strip() for t in old_repr] == new_tags:
+                need_write = False
+        if not new_tags and not isinstance(old_repr, str):
+            # nothing to do
+            need_write = False
+
+        if not need_write:
+            # still update DB to ensure consistency
+            try:
+                conn = get_connection()
+                cur = conn.cursor()
+                csv_text = ",".join(new_tags) if new_tags else None
+                cur.execute("UPDATE folder_index SET tags = ? WHERE path = ?", (csv_text, str(folder_path)))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                errors.append(f"db-update:{folder_path}:{e}")
+            continue
+
+        # backup
+        try:
+            bak = meta_path.with_suffix(meta_path.suffix + ".bak")
+            content = meta_path.read_text(encoding="utf-8")
+            if not bak.exists():
+                bak.write_text(content, encoding="utf-8")
+            else:
+                ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                bak_ts = meta_path.with_suffix(meta_path.suffix + f".{ts}.bak")
+                bak_ts.write_text(content, encoding="utf-8")
+        except Exception as e:
+            # backup failure tolerated
+            pass
+
+        meta["tags"] = new_tags
+        # Ensure dates
+        try:
+            if not meta.get("added_at"):
+                ctime = folder_path.stat().st_ctime
+                meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+        except Exception:
+            meta["added_at"] = datetime.now().isoformat()
+        meta["modified_at"] = datetime.now().isoformat()
+        try:
+            with meta_path.open("w", encoding="utf-8") as fh:
+                json.dump(meta, fh, ensure_ascii=False, indent=2)
+            fixed += 1
+        except Exception as e:
+            errors.append(f"write:{meta_path}:{e}")
+            continue
+
+        # update DB and tag catalog
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+            csv_text = ",".join(new_tags) if new_tags else None
+            cur.execute("UPDATE folder_index SET tags = ? WHERE path = ?", (csv_text, str(folder_path)))
+            for t in new_tags:
+                updated_tags.add(t)
+                try:
+                    cur.execute("INSERT OR IGNORE INTO tag_catalog(name) VALUES(?)", (t,))
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            errors.append(f"db:{folder_path}:{e}")
+
+    return {"ok": True, "checked": checked, "fixed": fixed, "errors": errors, "new_tags_indexed": len(updated_tags)}
+
+
+@router.post("/backfill-dates-all")
+def backfill_dates_all():
+    root = os.getenv("COLLECTION_ROOT")
+    if not root:
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT non défini")
+    root_path = Path(root)
+    if not root_path.exists() or not root_path.is_dir():
+        raise HTTPException(status_code=400, detail="COLLECTION_ROOT introuvable")
+
+    checked = 0
+    updated = 0
+    errors: list[str] = []
+
+    for entry in os.scandir(root_path):
+        if not entry.is_dir() or entry.name.startswith('.'):
+            continue
+        folder_path = Path(entry.path)
+        meta_path = folder_path / ".stl_collect.json"
+        if not meta_path.exists() or not meta_path.is_file():
+            continue
+        checked += 1
+        try:
+            with meta_path.open("r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception as e:
+            errors.append(f"read:{meta_path}:{e}")
+            continue
+
+        before = json.dumps(meta, sort_keys=True, ensure_ascii=False)
+
+        # Ensure added_at
+        try:
+            if not meta.get("added_at"):
+                ctime = folder_path.stat().st_ctime
+                meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+        except Exception:
+            if not meta.get("added_at"):
+                meta["added_at"] = datetime.now().isoformat()
+
+        # Ensure modified_at only if missing
+        if not meta.get("modified_at"):
+            meta["modified_at"] = datetime.now().isoformat()
+
+        after = json.dumps(meta, sort_keys=True, ensure_ascii=False)
+        if before == after:
+            continue
+
+        # backup
+        try:
+            bak = meta_path.with_suffix(meta_path.suffix + ".bak")
+            content = meta_path.read_text(encoding="utf-8")
+            if not bak.exists():
+                bak.write_text(content, encoding="utf-8")
+            else:
+                ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                bak_ts = meta_path.with_suffix(meta_path.suffix + f".{ts}.bak")
+                bak_ts.write_text(content, encoding="utf-8")
+        except Exception:
+            pass
+
+        try:
+            with meta_path.open("w", encoding="utf-8") as fh:
+                json.dump(meta, fh, ensure_ascii=False, indent=2)
+            updated += 1
+        except Exception as e:
+            errors.append(f"write:{meta_path}:{e}")
+            continue
+
+    return {"ok": True, "checked": checked, "updated": updated, "errors": errors}
 
 @router.post("/tags/reindex")
 def tags_reindex_full():
@@ -545,6 +908,14 @@ def add_tag_to_folder(
     if tag not in current:
         current.append(tag)
     meta["tags"] = current
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
     try:
         with open(meta_path, "w", encoding="utf-8") as fh:
             json.dump(meta, fh, ensure_ascii=False, indent=2)
@@ -592,6 +963,14 @@ def remove_tag_from_folder(
         current = [t.strip() for t in raw.split(",") if t.strip()]
     new_tags = [t for t in current if t != tag]
     meta["tags"] = new_tags
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
     try:
         with open(meta_path, "w", encoding="utf-8") as fh:
             json.dump(meta, fh, ensure_ascii=False, indent=2)

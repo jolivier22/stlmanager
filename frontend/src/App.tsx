@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from 'react'
-import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, Pencil, Trash2, ArrowUp } from 'lucide-react'
+import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, X, Pencil, Trash2, ArrowUp } from 'lucide-react'
 
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8091'
 
@@ -32,14 +32,21 @@ export default function App() {
     const v = Number(localStorage.getItem('stlm.limit') || '24')
     return [12,24,48,96].includes(v) ? v : 24
   })
-  const [sort, setSort] = useState<'name' | 'date' | 'rating'>(() => {
-    const v = localStorage.getItem('stlm.sort') as 'name' | 'date' | 'rating' | null
-    return (v === 'name' || v === 'date' || v === 'rating') ? v : 'name'
+  const [sort, setSort] = useState<'name' | 'date' | 'rating' | 'created' | 'modified'>(() => {
+    const v = localStorage.getItem('stlm.sort') as 'name' | 'date' | 'rating' | 'created' | 'modified' | null
+    return (v === 'name' || v === 'date' || v === 'rating' || v === 'created' || v === 'modified') ? v : 'name'
   })
   const [order, setOrder] = useState<'asc' | 'desc'>(() => {
     const v = localStorage.getItem('stlm.order') as 'asc' | 'desc' | null
     return (v === 'asc' || v === 'desc') ? v : 'asc'
   })
+  // Tag filters (cumulative)
+  const [filterTags, setFilterTags] = useState<string[]>(() => {
+    try { const raw = localStorage.getItem('stlm.filterTags'); const arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.filter((t: any) => typeof t === 'string' && t.trim()).map((t: string) => t.trim()) : [] } catch { return [] }
+  })
+  const [filterInput, setFilterInput] = useState<string>('')
+  const [filterSugs, setFilterSugs] = useState<string[]>([])
+  const [filterSugsLoading, setFilterSugsLoading] = useState<boolean>(false)
   const [autoInc, setAutoInc] = useState<boolean>(() => localStorage.getItem('stlm.autoInc') === '1')
   const [autoIncSec, setAutoIncSec] = useState<number>(() => Number(localStorage.getItem('stlm.autoIncSec') || '30'))
   const [lastIncStatus, setLastIncStatus] = useState<string>('')
@@ -49,9 +56,13 @@ export default function App() {
   const [tagsLoading, setTagsLoading] = useState<boolean>(false)
   const [tags, setTags] = useState<string[]>([])
   const [tagsTotal, setTagsTotal] = useState<number>(0)
+  const [datesBusy, setDatesBusy] = useState<boolean>(false)
+  const [datesStatus, setDatesStatus] = useState<string>('')
   const [autoTagsInc, setAutoTagsInc] = useState<boolean>(() => localStorage.getItem('stlm.autoTagsInc') === '1')
   const [autoTagsSec, setAutoTagsSec] = useState<number>(() => Number(localStorage.getItem('stlm.autoTagsSec') || '60'))
   const [lastTagsStatus, setLastTagsStatus] = useState<string>('')
+  const [fixAllBusy, setFixAllBusy] = useState<boolean>(false)
+  const [fixAllStatus, setFixAllStatus] = useState<string>('')
   // Detail view state
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [detail, setDetail] = useState<any | null>(null)
@@ -60,6 +71,7 @@ export default function App() {
   const [newTag, setNewTag] = useState<string>('')
   const [tagSugs, setTagSugs] = useState<string[]>([])
   const [tagSugsLoading, setTagSugsLoading] = useState<boolean>(false)
+  const [fixBusy, setFixBusy] = useState<boolean>(false)
   // Rename state
   const [renameEditing, setRenameEditing] = useState<boolean>(false)
   const [renameInput, setRenameInput] = useState<string>('')
@@ -103,6 +115,9 @@ export default function App() {
       url.searchParams.set('page', String(page))
       url.searchParams.set('limit', String(limit))
       if (query) url.searchParams.set('q', query)
+      if (Array.isArray(filterTags) && filterTags.length) {
+        for (const t of filterTags) { url.searchParams.append('tags', t) }
+      }
       const r = await fetch(url.toString())
       const d = await r.json()
       const items: Folder[] = d.items ?? []
@@ -187,6 +202,26 @@ export default function App() {
     }
   }
 
+  const doFixTagsAll = async () => {
+    setFixAllBusy(true)
+    setFixAllStatus('')
+    try {
+      const r = await fetch(`${API_BASE}/folders/fix-tags-all`, { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { setFixAllStatus('Erreur correction globale'); pushToast('Erreur correction globale', 'error'); return }
+      const msg = `Corrigés: ${d.fixed ?? 0} / Vérifiés: ${d.checked ?? 0}`
+      setFixAllStatus(msg)
+      pushToast('Correction globale terminée', 'success')
+      try { await doTagsReindexFull() } catch {}
+      if (view === 'home') { await loadFolders() }
+    } catch {
+      setFixAllStatus('Erreur correction globale')
+      pushToast('Erreur correction globale', 'error')
+    } finally {
+      setFixAllBusy(false)
+    }
+  }
+
   const doTagsReindexIncremental = async () => {
     try {
       const r = await fetch(`${API_BASE}/folders/tags/reindex-incremental`, { method: 'POST' })
@@ -226,7 +261,7 @@ export default function App() {
   useEffect(() => {
     loadFolders()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, sort, order, page, limit])
+  }, [query, sort, order, page, limit, filterTags.join('|')])
 
   // Persist simple settings
   useEffect(() => { localStorage.setItem('stlm.view', view) }, [view])
@@ -235,6 +270,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem('stlm.sort', sort) }, [sort])
   useEffect(() => { localStorage.setItem('stlm.order', order) }, [order])
   useEffect(() => { localStorage.setItem('stlm.limit', String(limit)) }, [limit])
+  useEffect(() => { try { localStorage.setItem('stlm.filterTags', JSON.stringify(filterTags)) } catch {} }, [filterTags])
   useEffect(() => { localStorage.setItem('stlm.autoRefreshAfterReindex', autoRefreshAfterReindex ? '1' : '0') }, [autoRefreshAfterReindex])
   useEffect(() => { localStorage.setItem('stlm.autoTagsInc', autoTagsInc ? '1' : '0') }, [autoTagsInc])
   useEffect(() => { localStorage.setItem('stlm.autoTagsSec', String(autoTagsSec)) }, [autoTagsSec])
@@ -264,6 +300,35 @@ export default function App() {
     if (view === 'settings') loadTagsCatalog()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, tagsQ])
+
+  // Dynamic suggestions for filter tags input
+  useEffect(() => {
+    let stop = false
+    const run = async () => {
+      const q = (filterInput || '').trim()
+      if (!q) { setFilterSugs([]); return }
+      try {
+        setFilterSugsLoading(true)
+        const url = new URL(`${API_BASE}/folders/tags`)
+        url.searchParams.set('q', q)
+        url.searchParams.set('limit', '15')
+        const r = await fetch(url.toString())
+        const d = await r.json()
+        let sugs: string[] = Array.isArray(d?.tags) ? d.tags : []
+        if (Array.isArray(filterTags) && filterTags.length) {
+          const setSel = new Set(filterTags.map(t => t.toLowerCase()))
+          sugs = sugs.filter((t) => !setSel.has(String(t).toLowerCase()))
+        }
+        if (!stop) setFilterSugs(sugs)
+      } catch {
+        if (!stop) setFilterSugs([])
+      } finally {
+        if (!stop) setFilterSugsLoading(false)
+      }
+    }
+    const id = setTimeout(run, 150)
+    return () => { stop = true; clearTimeout(id) }
+  }, [filterInput, filterTags])
 
   // Load detail when entering detail view
   useEffect(() => {
@@ -387,6 +452,27 @@ export default function App() {
         setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, tags: d.tags } : f) : prev))
       }
     } catch {}
+  }
+
+  const fixTagsForCurrent = async () => {
+    if (!detail?.path) return
+    setFixBusy(true)
+    try {
+      const url = new URL(`${API_BASE}/folders/fix-tags`)
+      url.search = `path=${encodeURIComponent(detail.path)}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { pushToast('Erreur correction tags', 'error'); return }
+      if (Array.isArray(d?.tags)) {
+        setDetail((prev: any) => prev ? { ...prev, tags: d.tags } : prev)
+        setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, tags: d.tags } : f) : prev))
+      }
+      pushToast(d?.changed ? 'Tags corrigés' : 'Tags déjà propres', 'success')
+    } catch {
+      pushToast('Erreur correction tags', 'error')
+    } finally {
+      setFixBusy(false)
+    }
   }
 
   const setRating = async (value: number) => {
@@ -535,6 +621,25 @@ export default function App() {
     return pages
   }, [page, totalPages])
 
+  const doBackfillDatesAll = async () => {
+    setDatesBusy(true)
+    setDatesStatus('')
+    try {
+      const r = await fetch(`${API_BASE}/folders/backfill-dates-all`, { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) { setDatesStatus('Erreur ajout des dates'); pushToast('Erreur ajout des dates', 'error'); return }
+      const msg = `Mises à jour: ${d.updated ?? 0} / Vérifiés: ${d.checked ?? 0}`
+      setDatesStatus(msg)
+      pushToast('Dates ajoutées/mises à jour', 'success')
+      if (view === 'home') { await loadFolders() }
+    } catch {
+      setDatesStatus('Erreur ajout des dates')
+      pushToast('Erreur ajout des dates', 'error')
+    } finally {
+      setDatesBusy(false)
+    }
+  }
+
   return (
     <div className="min-h-screen flex font-sans">
       {/* Sidebar */}
@@ -567,16 +672,97 @@ export default function App() {
               {loading && (
                 <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 animate-spin" size={16} />
               )}
+              {!loading && q.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setQ('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                  aria-label="Effacer la recherche"
+                  title="Effacer la recherche"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+            {/* Tag filters */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap max-w-[40vw]">
+                {filterTags.map((t: string, i: number) => (
+                  <span key={`${t}-${i}`} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-zinc-800 text-zinc-200 border border-zinc-700">
+                    {t}
+                    <button
+                      type="button"
+                      onClick={() => { setFilterTags(prev => prev.filter(x => x !== t)); setPage(1) }}
+                      className="hover:text-zinc-100"
+                      aria-label={`Retirer ${t}`}
+                      title={`Retirer ${t}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+                <div className="relative">
+                  <input
+                    value={filterInput}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const v = (filterInput || '').trim()
+                        if (v) {
+                          const exists = filterTags.some(t => t.toLowerCase() === v.toLowerCase())
+                          if (!exists) { setFilterTags(prev => [...prev, v]); setPage(1) }
+                          setFilterInput('')
+                          setFilterSugs([])
+                        }
+                      }
+                    }}
+                    placeholder="Tag + Entrée"
+                    className="w-36 px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500"
+                  />
+                  {(filterSugsLoading || (filterSugs && filterSugs.length > 0)) && (
+                    <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-auto rounded-md border border-zinc-800 bg-zinc-950 shadow-lg z-20">
+                      {filterSugsLoading && (
+                        <div className="px-3 py-2 text-sm text-zinc-400">Recherche…</div>
+                      )}
+                      {!filterSugsLoading && filterSugs.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => { setFilterTags(prev => [...prev, t]); setPage(1); setFilterInput(''); setFilterSugs([]) }}
+                          className="w-full text-left px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
+                        >
+                          {t}
+                        </button>
+                      ))}
+                      {!filterSugsLoading && filterSugs.length === 0 && (
+                        <div className="px-3 py-2 text-sm text-zinc-400">Aucun tag</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {filterTags.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setFilterTags([]); setPage(1) }}
+                  className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-200 hover:bg-zinc-800"
+                  title="Effacer tous les tags"
+                >
+                  Effacer
+                </button>
+              )}
             </div>
             {/* Sort controls */}
             <select
               value={sort}
-              onChange={(e) => { setPage(1); setSort(e.target.value as 'name' | 'date' | 'rating') }}
+              onChange={(e) => { setPage(1); setSort(e.target.value as 'name' | 'date' | 'rating' | 'created' | 'modified') }}
               className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
               title="Trier par"
             >
               <option value="name">Nom</option>
               <option value="date">Date</option>
+              <option value="created">Date de création</option>
+              <option value="modified">Dernière modification</option>
               <option value="rating">Note</option>
             </select>
             <select
@@ -785,6 +971,16 @@ export default function App() {
                             >
                               <Trash2 size={14} />
                               Supprimer
+                            </button>
+                            <button
+                              type="button"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={fixTagsForCurrent}
+                              disabled={fixBusy}
+                              className="px-2 py-1 rounded text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 inline-flex items-center gap-1 disabled:opacity-50"
+                              title="Corriger les tags du JSON"
+                            >
+                              {fixBusy ? 'Correction…' : 'Corriger tags'}
                             </button>
                           </div>
                         )}
@@ -1079,6 +1275,22 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <button onClick={doTagsReindexFull} className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700">Réindexer tags (complet)</button>
                   <button onClick={doTagsReindexIncremental} className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700">Réindexer tags (incrémental)</button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={doFixTagsAll} disabled={fixAllBusy} className="px-3 py-2 rounded-md bg-amber-700 hover:bg-amber-600 text-white border border-amber-800 disabled:opacity-50">
+                    {fixAllBusy ? 'Correction tags…' : 'Corriger tous les tags (globale)'}
+                  </button>
+                  {fixAllStatus && (
+                    <span className="text-sm text-zinc-400">{fixAllStatus}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={doBackfillDatesAll} disabled={datesBusy} className="px-3 py-2 rounded-md bg-indigo-700 hover:bg-indigo-600 text-white border border-indigo-800 disabled:opacity-50">
+                    {datesBusy ? 'Ajout des dates…' : 'Ajouter les dates à tous les projets'}
+                  </button>
+                  {datesStatus && (
+                    <span className="text-sm text-zinc-400">{datesStatus}</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2 text-sm text-zinc-300">

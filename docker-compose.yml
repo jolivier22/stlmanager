@@ -8,9 +8,9 @@ services:
     volumes:
       - ./data:/app/data
       # Utiliser un disque SSD USB local (Windows)
-      - "H:/Fichiers3D:/mnt/CollectionSTL:rw"
-      # Alternative (commentée): partage SMB monté via CIFS
-      # - nas-share:/mnt/CollectionSTL:rw
+      - "C:/Fichiers3D:/mnt/CollectionSTL"
+      # Alternative 
+      # - "C:/Users/joliv/OneDrive/Documents/Dev/stlmanager/collection:/mnt/CollectionSTL:rw"
     ports:
       - '8091:8000'
     restart: unless-stopped

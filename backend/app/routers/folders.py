@@ -83,6 +83,7 @@ def list_folders(
     limit: int = Query(24, ge=1, le=200, description="Taille de page"),
     q: str | None = Query(None, description="Filtre texte (nom/chemin)"),
     tags: list[str] | None = Query(None, description="Filtre par tags (cumulatif): répétez le paramètre tags= pour chaque tag"),
+    printed: bool | None = Query(None, description="Filtrer par imprimé (true/false)"),
 ):
     conn = get_connection()
     cur = conn.cursor()
@@ -107,6 +108,15 @@ def list_folders(
             where_page_parts.append("(fi.tags IS NOT NULL AND instr(',' || LOWER(fi.tags) || ',', ',' || ? || ',') > 0)")
             params_total.append(tv)
             params_page.append(tv)
+    # Printed filter
+    if printed is not None:
+        if printed is True:
+            where_total_parts.append("(printed = 1)")
+            where_page_parts.append("(fi.printed = 1)")
+        else:
+            where_total_parts.append("(printed = 0 OR printed IS NULL)")
+            where_page_parts.append("(fi.printed = 0 OR fi.printed IS NULL)")
+
     where_clause_total = (" WHERE " + " AND ".join(where_total_parts)) if where_total_parts else ""
     where_clause_page = (" WHERE " + " AND ".join(where_page_parts)) if where_page_parts else ""
 
@@ -134,7 +144,7 @@ def list_folders(
     cur.execute(
         f"""
         SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
-               fi.tags, fi.rating, fi.created_at, fi.modified_at,
+               fi.tags, fi.rating, fi.created_at, fi.modified_at, fi.printed,
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path
@@ -162,6 +172,8 @@ def list_folders(
             "archives": d.pop("archives"),
             "stls": d.pop("stls"),
         }
+        # Normalize printed to bool
+        d["printed"] = bool(d.get("printed"))
         items.append(d)
     return {"items": items, "total": total}
 
@@ -247,8 +259,8 @@ def upload_project(files: List[UploadFile] = File(...)):
                 cur.execute(
                     """
                     INSERT OR REPLACE INTO folder_index
-                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
-                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
+                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed)
+                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed)
                     """,
                     rec,
                 )
@@ -361,6 +373,7 @@ def _build_folder_record(fpath: Path):
     thumbnail_path = None
     created_at = None
     modified_at = None
+    printed_flag = 0
     if meta_path.exists() and meta_path.is_file():
         try:
             with open(meta_path, "r", encoding="utf-8") as fh:
@@ -387,12 +400,21 @@ def _build_folder_record(fpath: Path):
                 candidate = fpath / thumbnail_name
                 if candidate.exists() and candidate.is_file():
                     thumbnail_path = str(candidate)
+            # Printed
+            try:
+                pr = meta.get("printed")
+                if isinstance(pr, bool):
+                    printed_flag = 1 if pr else 0
+                elif isinstance(pr, (int, float)):
+                    printed_flag = 1 if int(pr) != 0 else 0
+            except Exception:
+                pass
             # Dates
             try:
                 if isinstance(meta.get("added_at"), str) and meta.get("added_at").strip():
                     created_at = meta.get("added_at").strip()
             except Exception:
-                pass
+                created_at = None
             try:
                 if isinstance(meta.get("modified_at"), str) and meta.get("modified_at").strip():
                     modified_at = meta.get("modified_at").strip()
@@ -420,8 +442,8 @@ def _build_folder_record(fpath: Path):
     return {
         "path": str(fpath),
         "name": fpath.name,
-        "rel": fpath.name,
-        "mtime": folder_mtime,
+        "rel": str(fpath),
+        "mtime": float(folder_mtime) if isinstance(folder_mtime, (int, float)) else None,
         "images": images,
         "gifs": gifs,
         "videos": videos,
@@ -432,6 +454,7 @@ def _build_folder_record(fpath: Path):
         "thumbnail_path": thumbnail_path,
         "created_at": created_at,
         "modified_at": modified_at,
+        "printed": printed_flag,
     }
 
 
@@ -481,8 +504,8 @@ def reindex_folders():
                 cur.execute(
                     """
                     INSERT OR REPLACE INTO folder_index
-                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
-                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
+                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed)
+                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed)
                     """,
                     rec,
                 )
@@ -562,8 +585,8 @@ def reindex_folders_incremental():
             cur.execute(
                 """
                 INSERT OR REPLACE INTO folder_index
-                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
-                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
+                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed)
+                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed)
                 """,
                 rec,
             )
@@ -1276,7 +1299,7 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
     cur.execute(
         """
         SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
-               fi.tags, fi.rating, fi.created_at, fi.modified_at,
+               fi.tags, fi.rating, fi.created_at, fi.modified_at, fi.printed,
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path
@@ -1360,6 +1383,49 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
         },
         "hero": hero,
     }
+
+
+@router.post("/set-printed")
+def set_folder_printed(
+    path: str = Query(..., description="Chemin absolu du projet (dossier)"),
+    printed: bool = Query(..., description="Projet imprimé ?"),
+):
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    # Update meta JSON
+    meta_path = folder_path / ".stl_collect.json"
+    meta: dict = {}
+    if meta_path.exists() and meta_path.is_file():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception:
+            meta = {}
+    meta["printed"] = bool(printed)
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
+    try:
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur écriture meta: {e}")
+    # Update index
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE folder_index SET printed = ? WHERE path = ?", (1 if printed else 0, path))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+    return {"ok": True, "printed": bool(printed)}
 
 
 @router.post("/delete-file")
@@ -1489,3 +1555,43 @@ def delete_project(path: str = Query(..., description="Chemin absolu du projet (
         raise HTTPException(status_code=500, detail=f"Erreur nettoyage index: {e}")
 
     return {"ok": True, "removed": str(target)}
+
+
+@router.post("/reset-collection")
+def reset_collection():
+    """Vide l'index local (cache.db) pour la collection actuelle puis relance un réindex complet.
+    Utile après changement de COLLECTION_ROOT (montage différent).
+    """
+    # Purge DB tables liées à l'index dossiers et overrides
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        # Effacer les tables d'indexation
+        try:
+            cur.execute("DELETE FROM folder_index")
+        except Exception:
+            pass
+        try:
+            cur.execute("DELETE FROM preview_overrides")
+        except Exception:
+            pass
+        try:
+            cur.execute("DELETE FROM tag_catalog")
+        except Exception:
+            pass
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur purge index: {e}")
+
+    # Réindexer entièrement la nouvelle collection
+    try:
+        stats = reindex_folders()
+        # Ajouter un indicateur pour différencier l'opération
+        if isinstance(stats, dict):
+            stats["reset"] = True
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur reindex après reset: {e}")

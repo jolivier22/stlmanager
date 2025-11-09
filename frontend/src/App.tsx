@@ -17,6 +17,9 @@ type Folder = {
   tags?: string[]
   rating?: number | null
   thumbnail_path?: string | null
+  created_at?: string | null
+  modified_at?: string | null
+  printed?: boolean
 }
 
 export default function App() {
@@ -40,6 +43,10 @@ export default function App() {
   const [order, setOrder] = useState<'asc' | 'desc'>(() => {
     const v = localStorage.getItem('stlm.order') as 'asc' | 'desc' | null
     return (v === 'asc' || v === 'desc') ? v : 'asc'
+  })
+  const [printedFilter, setPrintedFilter] = useState<'all' | 'yes' | 'no'>(() => {
+    const v = localStorage.getItem('stlm.printed') as 'all' | 'yes' | 'no' | null
+    return (v === 'yes' || v === 'no') ? v : 'all'
   })
   // Tag filters (cumulative)
   const [filterTags, setFilterTags] = useState<string[]>(() => {
@@ -109,6 +116,33 @@ export default function App() {
     return `${val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2)} ${units[i]}`
   }
 
+  const isNew = (iso?: string | null) => {
+    if (!iso) return false
+    const t = new Date(iso).getTime()
+    if (!isFinite(t)) return false
+    return Date.now() - t < 48 * 3600 * 1000
+  }
+
+  const setPrinted = async (value: boolean) => {
+    if (!detail?.path) return
+    // optimistic update
+    setDetail((prev: any) => prev ? { ...prev, printed: value } : prev)
+    setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, printed: value } : f) : prev))
+    try {
+      const url = new URL(`${API_BASE}/folders/set-printed`)
+      url.search = `path=${encodeURIComponent(detail.path)}&printed=${value ? 'true' : 'false'}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      if (!r.ok) {
+        // revert on failure
+        setDetail((prev: any) => prev ? { ...prev, printed: !value } : prev)
+        setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, printed: !value } : f) : prev))
+      }
+    } catch (e) {
+      setDetail((prev: any) => prev ? { ...prev, printed: !value } : prev)
+      setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, printed: !value } : f) : prev))
+    }
+  }
+
   // Load disk usage when entering Home view
   useEffect(() => {
     if (view === 'home') {
@@ -116,6 +150,14 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view])
+
+  // Reload folders when filters/sort/pagination change
+  useEffect(() => {
+    if (view === 'home') {
+      loadFolders()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, sort, order, page, limit, query, filterTags, printedFilter])
 
   const loadFolders = async () => {
     setLoading(true)
@@ -129,6 +171,8 @@ export default function App() {
       if (Array.isArray(filterTags) && filterTags.length) {
         for (const t of filterTags) { url.searchParams.append('tags', t) }
       }
+      if (printedFilter === 'yes') url.searchParams.set('printed', 'true')
+      if (printedFilter === 'no') url.searchParams.set('printed', 'false')
       const r = await fetch(url.toString())
       const d = await r.json()
       const items: Folder[] = d.items ?? []
@@ -181,6 +225,25 @@ export default function App() {
       await loadFolders()
     } catch {
       setLastIncStatus('Erreur reindex complet')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const doResetCollection = async () => {
+    setLoading(true)
+    try {
+      const r = await fetch(`${API_BASE}/folders/reset-collection`, { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (r.ok) {
+        const indexed = d?.indexed ?? d?.count ?? d?.added ?? 0
+        setLastIncStatus(`Reset index: ${indexed} dossiers indexés`)
+        await loadFolders()
+      } else {
+        setLastIncStatus(`Erreur reset: ${d?.detail || r.status}`)
+      }
+    } catch {
+      setLastIncStatus('Erreur reset collection')
     } finally {
       setLoading(false)
     }
@@ -845,6 +908,16 @@ export default function App() {
               <option value="rating">Note</option>
             </select>
             <select
+              value={printedFilter}
+              onChange={(e) => { const v = e.target.value as 'all'|'yes'|'no'; setPrintedFilter(v); localStorage.setItem('stlm.printed', v); setPage(1) }}
+              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
+              title="Filtrer Printed"
+            >
+              <option value="all">Tous</option>
+              <option value="yes">Printed</option>
+              <option value="no">Non imprimé</option>
+            </select>
+            <select
               value={order}
               onChange={(e) => { setPage(1); setOrder(e.target.value as 'asc' | 'desc') }}
               className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
@@ -926,13 +999,19 @@ export default function App() {
                 <div className="font-semibold text-zinc-100 mb-2 truncate" title={f.name}>{f.name}</div>
                 {/* Miniature (hauteur 250px, ratio 3:4 portrait) */}
                 <div
-                  className="h-[250px] rounded border border-zinc-700 overflow-hidden mx-auto"
+                  className="relative h-[250px] rounded border border-zinc-700 overflow-hidden mx-auto"
                   style={{ aspectRatio: '3 / 4' }}
                 >
                   {f.thumbnail_path ? (
                     <img src={fileUrl(f.thumbnail_path)} loading="lazy" alt={f.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-zinc-800" />
+                  )}
+                  {isNew((f as any).created_at) && (
+                    <span className="absolute top-2 left-2 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-600 text-white border border-emerald-700 shadow">New</span>
+                  )}
+                  {f.printed && (
+                    <span className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-semibold rounded bg-sky-600 text-white border border-sky-700 shadow">Printed</span>
                   )}
                 </div>
                 {/* Tags + Note */}
@@ -1000,11 +1079,17 @@ export default function App() {
                     )}
                     <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 to-transparent" />
                     <div className="absolute bottom-3 left-4 right-4 flex gap-4 items-end">
-                      <div className="w-32 sm:w-40 md:w-48 aspect-[3/4] overflow-hidden rounded border border-zinc-700 bg-zinc-900">
+                      <div className="relative w-32 sm:w-40 md:w-48 aspect-[3/4] overflow-hidden rounded border border-zinc-700 bg-zinc-900">
                         {detail.thumbnail_path ? (
                           <img src={fileUrl(detail.thumbnail_path)} alt={detail.name} className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full bg-zinc-800" />
+                        )}
+                        {isNew(detail.created_at) && (
+                          <span className="absolute top-2 left-2 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-600 text-white border border-emerald-700 shadow">New</span>
+                        )}
+                        {detail.printed && (
+                          <span className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-semibold rounded bg-sky-600 text-white border border-sky-700 shadow">Printed</span>
                         )}
                       </div>
                       <div className="pb-1">
@@ -1150,7 +1235,7 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                        <div className="mt-2 text-amber-400 flex items-center gap-1">
+                        <div className="mt-2 text-amber-400 flex items-center gap-2">
                           {Array.from({ length: 5 }).map((_, i) => (
                             <button
                               key={i}
@@ -1170,6 +1255,10 @@ export default function App() {
                           >
                             Effacer
                           </button>
+                          <label className="ml-3 inline-flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" checked={!!detail?.printed} onChange={(e) => setPrinted(e.target.checked)} />
+                            Printed
+                          </label>
                         </div>
                         <div className="mt-2 text-sm text-zinc-400">
                           Images: {detail.counts?.images} · GIFs: {detail.counts?.gifs} · Vidéos: {detail.counts?.videos} · Archives: {detail.counts?.archives} · STLs: {detail.counts?.stls}
@@ -1372,6 +1461,9 @@ export default function App() {
                   </button>
                   <button onClick={doIncrementalReindex} className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700">
                     Mise à jour incrémentale
+                  </button>
+                  <button onClick={doResetCollection} disabled={loading} className="px-3 py-2 rounded-md bg-red-800 hover:bg-red-700 text-white border border-red-800">
+                    Réinitialiser l'index (changement de collection)
                   </button>
                 </div>
                 <div className="flex items-center gap-3">

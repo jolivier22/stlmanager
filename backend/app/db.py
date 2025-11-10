@@ -67,22 +67,44 @@ def init_db() -> None:
             rating INTEGER,
             thumbnail_path TEXT,
             created_at TEXT,
-            modified_at TEXT
+            modified_at TEXT,
+            printed INTEGER DEFAULT 0
         );
         """
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_name ON folder_index(name)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_mtime ON folder_index(mtime)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_rating ON folder_index(rating)")
-    # Ensure columns exist for older installs
+    # Ensure columns exist for older installs, with explicit logs
     try:
-        cur.execute("ALTER TABLE folder_index ADD COLUMN created_at TEXT")
+        cur.execute("PRAGMA table_info(folder_index)")
+        cols = {row[1] for row in cur.fetchall()}
     except Exception:
-        pass
-    try:
-        cur.execute("ALTER TABLE folder_index ADD COLUMN modified_at TEXT")
-    except Exception:
-        pass
+        cols = set()
+    if "created_at" not in cols:
+        try:
+            cur.execute("ALTER TABLE folder_index ADD COLUMN created_at TEXT")
+            print("[db] migration: added column created_at")
+        except Exception as e:
+            print(f"[db] migration: created_at skipped: {e}")
+    else:
+        print("[db] migration: created_at already present")
+    if "modified_at" not in cols:
+        try:
+            cur.execute("ALTER TABLE folder_index ADD COLUMN modified_at TEXT")
+            print("[db] migration: added column modified_at")
+        except Exception as e:
+            print(f"[db] migration: modified_at skipped: {e}")
+    else:
+        print("[db] migration: modified_at already present")
+    if "printed" not in cols:
+        try:
+            cur.execute("ALTER TABLE folder_index ADD COLUMN printed INTEGER DEFAULT 0")
+            print("[db] migration: added column printed")
+        except Exception as e:
+            print(f"[db] migration: printed skipped: {e}")
+    else:
+        print("[db] migration: printed already present")
     try:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_created_at ON folder_index(created_at)")
     except Exception:

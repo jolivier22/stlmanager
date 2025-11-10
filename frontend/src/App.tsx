@@ -802,14 +802,15 @@ export default function App() {
       <main className="flex-1">
         {/* Topbar */}
         <div className="sticky top-0 z-10 bg-zinc-950/80 backdrop-blur border-b border-zinc-800">
-          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-2">
-            <div className="relative flex-1">
+          <div className="max-w-7xl mx-auto px-4 py-3">
+            {/* Search row (full width, above controls) */}
+            <div className="relative flex-1 mb-3">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
               <input
                 value={q}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setQ(e.target.value)}
                 placeholder="Recherche projets (nom, chemin)"
-                className="w-full pl-9 pr-8 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
+                className="w-full pl-9 pr-8 py-3 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-zinc-700"
               />
               {loading && (
                 <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 animate-spin" size={16} />
@@ -826,6 +827,8 @@ export default function App() {
                 </button>
               )}
             </div>
+            {/* Controls row: filters, sorts, actions */}
+            <div className="flex items-center gap-2">
             {/* Tag filters */}
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 flex-wrap max-w-[40vw]">
@@ -938,13 +941,14 @@ export default function App() {
               <option value="96">96</option>
             </select>
             <button onClick={doUploadProject} disabled={uploadBusy} className="px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50">
-              {uploadBusy ? `Envoi… ${uploadPct}%` : 'Ajouter un projet'}
+              {uploadBusy ? `Envoi… ${uploadPct}%` : 'Projet +'}
             </button>
             <button onClick={doScan} disabled={scanning} className="px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-2">
               <RefreshCw size={16} className={scanning ? 'animate-spin' : ''} />
               {scanning ? 'Scan…' : 'Scanner'}
             </button>
           </div>
+        </div>
         </div>
 
         {/* Content */}

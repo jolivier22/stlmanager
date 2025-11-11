@@ -1,11 +1,12 @@
 import os
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
-from typing import List
+from typing import List, Optional, Callable
 import json
 from ..db import get_connection
 import shutil
 from datetime import datetime
+from starlette.responses import StreamingResponse
 
 router = APIRouter()
 
@@ -1595,3 +1596,154 @@ def reset_collection():
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur reindex après reset: {e}")
+
+
+# ------------------------
+# Duplicates (REST + SSE)
+# ------------------------
+
+def _rows_with_tags():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT path, name, thumbnail_path, tags FROM folder_index")
+    rows = [dict(path=r[0], name=r[1], thumb=r[2], tags=_split_tags_csv(r[3])) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def _compute_duplicates(min_shared: int, limit: int, excluded_tags: list[str] = None, report_progress: Optional[Callable] = None):
+    rows = _rows_with_tags()
+    # Normalize excluded tags
+    excluded_set = set((t or "").strip().lower() for t in (excluded_tags or []) if (t or "").strip())
+    # Build tag -> list of indices
+    tag_map: dict[str, list[int]] = {}
+    for idx, r in enumerate(rows):
+        for t in (r.get("tags") or []):
+            tv = (t or "").strip().lower()
+            if not tv or tv in excluded_set:
+                continue
+            tag_map.setdefault(tv, []).append(idx)
+    pair_counts: dict[tuple[int, int], int] = {}
+    pair_shared: dict[tuple[int, int], set[str]] = {}
+    tags_list = list(tag_map.items())
+    total_tags = max(1, len(tags_list))
+    for i, (tag, lst) in enumerate(tags_list):
+        lst = list(set(lst))
+        n = len(lst)
+        for a in range(n):
+            ia = lst[a]
+            for b in range(a + 1, n):
+                ib = lst[b]
+                k = (ia, ib) if ia < ib else (ib, ia)
+                pair_counts[k] = pair_counts.get(k, 0) + 1
+                s = pair_shared.get(k)
+                if s is None:
+                    s = set()
+                    pair_shared[k] = s
+                s.add(tag)
+        if report_progress and (i % 10 == 0 or i == total_tags - 1):
+            pct = int((i + 1) * 100 / total_tags)
+            try:
+                report_progress(pct, phase="counting")
+            except Exception:
+                pass
+    # Build pairs
+    pairs = []
+    for (ia, ib), cnt in pair_counts.items():
+        if cnt >= max(1, int(min_shared)):
+            a = rows[ia]
+            b = rows[ib]
+            shared = sorted(list(pair_shared.get((ia, ib)) or pair_shared.get((ib, ia)) or []))
+            pairs.append({
+                "a_path": a.get("path"),
+                "a_name": a.get("name"),
+                "a_thumb": a.get("thumb"),
+                "b_path": b.get("path"),
+                "b_name": b.get("name"),
+                "b_thumb": b.get("thumb"),
+                "score": int(cnt),
+                "shared": shared,
+            })
+    pairs.sort(key=lambda x: (-int(x.get("score") or 0), str(x.get("a_name") or ""), str(x.get("b_name") or "")))
+    total = len(pairs)
+    return pairs[: max(1, int(limit))], total
+
+
+@router.get("/duplicates")
+def get_duplicates(
+    min_shared: int = Query(3, ge=1, le=20, description="Nombre minimal de tags partagés"),
+    limit: int = Query(200, ge=1, le=1000, description="Nombre maximum de paires renvoyées"),
+    excluded_tags: str = Query("", description="Tags à exclure (séparés par des virgules)"),
+):
+    try:
+        excluded_list = [t.strip() for t in excluded_tags.split(",") if t.strip()] if excluded_tags else []
+        pairs, total = _compute_duplicates(min_shared=min_shared, limit=limit, excluded_tags=excluded_list)
+        return {"pairs": pairs, "total": total}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur calcul doublons: {e}")
+
+
+@router.get("/duplicates/stream")
+def stream_duplicates(
+    min_shared: int = Query(3, ge=1, le=20),
+    limit: int = Query(200, ge=1, le=1000),
+    excluded_tags: str = Query("", description="Tags à exclure (séparés par des virgules)"),
+):
+    def event_gen():
+        # progress events during counting
+        def _report(pct: int, phase: str = ""):
+            msg = {"progress_pct": int(pct), "phase": phase or "counting"}
+            yield f"event: progress\n" + f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+        # First small debug
+        yield "event: debug\n" + f"data: {json.dumps({'note':'start'}, ensure_ascii=False)}\n\n"
+        # Compute
+        excluded_list = [t.strip() for t in excluded_tags.split(",") if t.strip()] if excluded_tags else []
+        excluded_set = set((t or "").strip().lower() for t in excluded_list if (t or "").strip())
+        rows = _rows_with_tags()
+        tag_map: dict[str, list[int]] = {}
+        for idx, r in enumerate(rows):
+            for t in (r.get("tags") or []):
+                tv = (t or "").strip().lower()
+                if not tv or tv in excluded_set:
+                    continue
+                tag_map.setdefault(tv, []).append(idx)
+        pair_counts: dict[tuple[int, int], int] = {}
+        pair_shared: dict[tuple[int, int], set[str]] = {}
+        tags_list = list(tag_map.items())
+        total_tags = max(1, len(tags_list))
+        for i, (tag, lst) in enumerate(tags_list):
+            lst = list(set(lst))
+            n = len(lst)
+            for a in range(n):
+                ia = lst[a]
+                for b in range(a + 1, n):
+                    ib = lst[b]
+                    k = (ia, ib) if ia < ib else (ib, ia)
+                    pair_counts[k] = pair_counts.get(k, 0) + 1
+                    s = pair_shared.get(k)
+                    if s is None:
+                        s = set()
+                        pair_shared[k] = s
+                    s.add(tag)
+            if i % 10 == 0 or i == total_tags - 1:
+                yield from _report(int((i + 1) * 100 / total_tags), phase="counting")
+        pairs_list = []
+        for (ia, ib), cnt in pair_counts.items():
+            if cnt >= max(1, int(min_shared)):
+                a = rows[ia]
+                b = rows[ib]
+                shared = sorted(list(pair_shared.get((ia, ib)) or pair_shared.get((ib, ia)) or []))
+                pairs_list.append({
+                    "a_path": a.get("path"),
+                    "a_name": a.get("name"),
+                    "a_thumb": a.get("thumb"),
+                    "b_path": b.get("path"),
+                    "b_name": b.get("name"),
+                    "b_thumb": b.get("thumb"),
+                    "score": int(cnt),
+                    "shared": shared,
+                })
+        pairs_list.sort(key=lambda x: (-int(x.get("score") or 0), str(x.get("a_name") or ""), str(x.get("b_name") or "")))
+        total = len(pairs_list)
+        pairs = pairs_list[: max(1, int(limit))]
+        yield "event: done\n" + f"data: {json.dumps({'pairs': pairs, 'total': total}, ensure_ascii=False)}\n\n"
+    return StreamingResponse(event_gen(), media_type="text/event-stream")

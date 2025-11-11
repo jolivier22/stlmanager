@@ -1668,6 +1668,33 @@ def _compute_duplicates(min_shared: int, limit: int, excluded_tags: list[str] = 
     return pairs[: max(1, int(limit))], total
 
 
+@router.get("/tags-counts")
+def get_tags_counts(
+    q: str | None = Query(None, description="Filtre de préfixe/contient"),
+    limit: int = Query(2000, ge=1, le=20000, description="Nombre maximum de tags renvoyés"),
+):
+    try:
+        rows = _rows_with_tags()
+        counts: dict[str, int] = {}
+        for r in rows:
+            for t in (r.get("tags") or []):
+                tv = (t or "").strip()
+                if not tv:
+                    continue
+                counts[tv] = counts.get(tv, 0) + 1
+        # Filter and sort
+        items = list(counts.items())
+        if q and (q := q.strip().lower()):
+            items = [(name, cnt) for (name, cnt) in items if q in name.lower()]
+        # Sort by count desc then name asc
+        items.sort(key=lambda x: (-int(x[1] or 0), str(x[0]).lower()))
+        total = len(items)
+        items = items[: max(1, int(limit))]
+        return {"tags": [{"name": name, "count": int(cnt)} for name, cnt in items], "total": total}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur liste des tags: {e}")
+
+
 @router.get("/duplicates")
 def get_duplicates(
     min_shared: int = Query(3, ge=1, le=20, description="Nombre minimal de tags partagés"),

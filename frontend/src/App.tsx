@@ -24,7 +24,8 @@ type Folder = {
 
 export default function App() {
   const [health, setHealth] = useState<string>('loading...')
-  const [view, setView] = useState<'home' | 'settings' | 'detail' | 'duplicates'>(() => (localStorage.getItem('stlm.view') as any) || 'home')
+  const [view, setView] = useState<'home' | 'settings' | 'detail' | 'duplicates' | 'tags'>(() => (localStorage.getItem('stlm.view') as any) || 'home')
+  const [previousView, setPreviousView] = useState<'home' | 'settings' | 'detail' | 'duplicates' | 'tags'>('home')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -64,6 +65,10 @@ export default function App() {
   const [tagsLoading, setTagsLoading] = useState<boolean>(false)
   const [tags, setTags] = useState<string[]>([])
   const [tagsTotal, setTagsTotal] = useState<number>(0)
+  // Tags page (list with counts)
+  const [tagsCounts, setTagsCounts] = useState<Array<{ name: string, count: number }>>([])
+  const [tagsCountsLoading, setTagsCountsLoading] = useState<boolean>(false)
+  const [tagsCountsQ, setTagsCountsQ] = useState<string>('')
   const [datesBusy, setDatesBusy] = useState<boolean>(false)
   const [datesStatus, setDatesStatus] = useState<string>('')
   const [autoTagsInc, setAutoTagsInc] = useState<boolean>(() => localStorage.getItem('stlm.autoTagsInc') === '1')
@@ -76,8 +81,9 @@ export default function App() {
   // Detail view state
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [detail, setDetail] = useState<any | null>(null)
-  // Scroll preservation for Home list
+  // Scroll preservation for Home list and Duplicates
   const [homeScrollY, setHomeScrollY] = useState<number>(0)
+  const [duplicatesScrollY, setDuplicatesScrollY] = useState<number>(0)
   const [newTag, setNewTag] = useState<string>('')
   const [tagSugs, setTagSugs] = useState<string[]>([])
   const [tagSugsLoading, setTagSugsLoading] = useState<boolean>(false)
@@ -199,6 +205,14 @@ export default function App() {
     return () => { stop = true; clearTimeout(id) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excludeInput, view, excludedTags])
+
+  // Load tags counts when entering Tags view or filter changes
+  useEffect(() => {
+    if (view === 'tags') {
+      loadTagsCounts()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, tagsCountsQ])
 
   // Reload folders when filters/sort/pagination change
   useEffect(() => {
@@ -334,11 +348,21 @@ export default function App() {
     }
   }
 
-  // Start duplicates stream when entering duplicates view
+  // Start duplicates stream when entering duplicates view or parameters change
   useEffect(() => {
-    if (view === 'duplicates') startDuplicatesSSE()
+    if (view === 'duplicates' && dups.length === 0) {
+      startDuplicatesSSE()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, minShared, dupLimit])
+  }, [view])
+
+  // Reload duplicates when parameters change
+  useEffect(() => {
+    if (view === 'duplicates') {
+      startDuplicatesSSE()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minShared, dupLimit])
 
   // ... rest of the code remains the same ...
   useEffect(() => { localStorage.setItem('stlm.sort', sort) }, [sort])
@@ -442,12 +466,27 @@ export default function App() {
     return () => { stop = true; clearTimeout(id) }
   }, [newTag, view, detail?.tags])
 
-  // Restore scroll when returning to home
+  // Restore scroll when returning to home or duplicates
   useEffect(() => {
     if (view === 'home') {
-      try { window.scrollTo(0, homeScrollY) } catch {}
+      setTimeout(() => {
+        try { window.scrollTo(0, homeScrollY) } catch {}
+      }, 100)
+    } else if (view === 'duplicates') {
+      setTimeout(() => {
+        try { window.scrollTo(0, duplicatesScrollY) } catch {}
+      }, 100)
     }
-  }, [view, homeScrollY])
+  }, [view, homeScrollY, duplicatesScrollY])
+
+  // Restore scroll for duplicates when content is loaded
+  useEffect(() => {
+    if (view === 'duplicates' && dups.length > 0 && !dupsLoading && duplicatesScrollY > 0) {
+      setTimeout(() => {
+        try { window.scrollTo(0, duplicatesScrollY) } catch {}
+      }, 200)
+    }
+  }, [view, dups.length, dupsLoading, duplicatesScrollY])
 
   // Lightbox keyboard navigation
   useEffect(() => {
@@ -718,7 +757,20 @@ export default function App() {
       setTagsLoading(false)
     }
   }
-  const openDetail = async (path: string) => { setSelectedPath(path); setView('detail') }
+  const openDetail = async (path: string, fromView?: 'home' | 'settings' | 'detail' | 'duplicates' | 'tags') => { 
+    // Save current scroll position
+    const currentView = fromView || view;
+    const currentScrollY = window.scrollY;
+    if (currentView === 'home') {
+      setHomeScrollY(currentScrollY);
+    } else if (currentView === 'duplicates') {
+      setDuplicatesScrollY(currentScrollY);
+    }
+    
+    setPreviousView(currentView); 
+    setSelectedPath(path); 
+    setView('detail') 
+  }
   const loadDetail = async (path: string) => {
     try {
       const url = new URL(`${API_BASE}/folders/detail`)
@@ -767,6 +819,23 @@ export default function App() {
     }
   }
 
+  const loadTagsCounts = async () => {
+    setTagsCountsLoading(true)
+    try {
+      const url = new URL(`${API_BASE}/folders/tags-counts`)
+      if ((tagsCountsQ || '').trim()) url.searchParams.set('q', (tagsCountsQ || '').trim())
+      url.searchParams.set('limit', '5000')
+      const r = await fetch(url.toString())
+      const d = await r.json().catch(() => ({}))
+      const list: Array<{ name: string, count: number }> = Array.isArray(d?.tags) ? d.tags : []
+      setTagsCounts(list)
+    } catch {
+      setTagsCounts([])
+    } finally {
+      setTagsCountsLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen flex font-sans">
       {/* Sidebar */}
@@ -776,7 +845,7 @@ export default function App() {
           STLManager
         </div>
         <NavItem icon={<Home size={18} />} label="Accueil" active={view==='home'} onClick={() => { setView('home') }} />
-        <NavItem icon={<Tags size={18} />} label="Tags" />
+        <NavItem icon={<Tags size={18} />} label="Tags" active={view==='tags'} onClick={() => setView('tags')} />
         <NavItem icon={<Star size={18} />} label="Favoris" />
         <NavItem icon={<BarChart3 size={18} />} label="Statistiques" />
         <NavItem icon={<BarChart3 size={18} />} label="Doublons" active={view==='duplicates'} onClick={() => setView('duplicates')} />
@@ -789,7 +858,7 @@ export default function App() {
         {/* Topbar */}
         <div className="sticky top-0 z-10 bg-zinc-950/80 backdrop-blur border-b border-zinc-800">
           <div className="max-w-7xl mx-auto px-4 py-3">
-            {view !== 'duplicates' && view !== 'settings' && (
+            {view !== 'duplicates' && view !== 'settings' && view !== 'tags' && (
               <>
                 {/* Search row (full width, above controls) */}
                 <div className="relative flex-1 mb-3">
@@ -853,7 +922,7 @@ export default function App() {
                 )}
               </div>
             )}
-            {view !== 'duplicates' && view !== 'settings' && (
+            {view !== 'duplicates' && view !== 'settings' && view !== 'tags' && (
               <>
                 {/* Controls row: filters, sorts, actions */}
                 <div className="flex items-center gap-2">
@@ -1099,6 +1168,29 @@ export default function App() {
             </div>
           </div>
         </>
+          ) : view === 'tags' ? (
+            <div>
+              <div className="mb-3 flex items-center gap-3">
+                <input
+                  value={tagsCountsQ}
+                  onChange={(e) => setTagsCountsQ(e.target.value)}
+                  placeholder="Rechercher un tag"
+                  className="w-72 px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500"
+                />
+                <div className="text-sm text-zinc-400">{tagsCountsLoading ? 'Chargement…' : `${tagsCounts.length} tags`}</div>
+              </div>
+              <div className="divide-y divide-zinc-800 rounded border border-zinc-800">
+                {tagsCounts.map((t, i) => (
+                  <div key={i} className="flex items-center justify-between px-3 py-2">
+                    <span className="text-zinc-100">{t.name}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-200 border border-zinc-700">{t.count}</span>
+                  </div>
+                ))}
+                {(!tagsCountsLoading && tagsCounts.length === 0) && (
+                  <div className="px-3 py-2 text-zinc-400">Aucun tag</div>
+                )}
+              </div>
+            </div>
           ) : view === 'duplicates' ? (
             <div>
               {dupsLoading && (
@@ -1120,11 +1212,11 @@ export default function App() {
                         {/* A */}
                         <div className="flex flex-col items-center w-[150px] flex-shrink-0">
                           <div className="mb-2 w-full px-1 text-zinc-100 overflow-hidden h-[2.4rem]">
-                            <button onClick={() => { if (p.a_path) { setSelectedPath(p.a_path); setView('detail') } }} className="w-full">
+                            <button onClick={() => { if (p.a_path) { openDetail(p.a_path, 'duplicates') } }} className="w-full">
                               <span className="block w-full text-center font-semibold text-sm leading-tight h-[2.4rem] overflow-hidden break-words hover:underline">{p.a_name || p.a?.name || ''}</span>
                             </button>
                           </div>
-                          <button onClick={() => { if (p.a_path) { setSelectedPath(p.a_path); setView('detail') } }} className="w-[150px] h-[200px] border border-zinc-700 rounded overflow-hidden bg-zinc-800 flex-shrink-0">
+                          <button onClick={() => { if (p.a_path) { openDetail(p.a_path, 'duplicates') } }} className="w-[150px] h-[200px] border border-zinc-700 rounded overflow-hidden bg-zinc-800 flex-shrink-0">
                             {p.a_thumb || p.a?.thumb || p.a?.thumbnail_path ? (
                               <img src={fileUrl(p.a_thumb || p.a?.thumb || p.a?.thumbnail_path)} loading="lazy" alt={p.a_name || p.a?.name || ''} className="w-full h-full object-cover" />
                             ) : (
@@ -1148,11 +1240,11 @@ export default function App() {
                         {/* B */}
                         <div className="flex flex-col items-center w-[150px] flex-shrink-0">
                           <div className="mb-2 w-full px-1 text-zinc-100 overflow-hidden h-[2.4rem]">
-                            <button onClick={() => { if (p.b_path) { setSelectedPath(p.b_path); setView('detail') } }} className="w-full">
+                            <button onClick={() => { if (p.b_path) { openDetail(p.b_path, 'duplicates') } }} className="w-full">
                               <span className="block w-full text-center font-semibold text-sm leading-tight h-[2.4rem] overflow-hidden break-words hover:underline">{p.b_name || p.b?.name || ''}</span>
                             </button>
                           </div>
-                          <button onClick={() => { if (p.b_path) { setSelectedPath(p.b_path); setView('detail') } }} className="w-[150px] h-[200px] border border-zinc-700 rounded overflow-hidden bg-zinc-800 flex-shrink-0">
+                          <button onClick={() => { if (p.b_path) { openDetail(p.b_path, 'duplicates') } }} className="w-[150px] h-[200px] border border-zinc-700 rounded overflow-hidden bg-zinc-800 flex-shrink-0">
                             {p.b_thumb || p.b?.thumb || p.b?.thumbnail_path ? (
                               <img src={fileUrl(p.b_thumb || p.b?.thumb || p.b?.thumbnail_path)} loading="lazy" alt={p.b_name || p.b?.name || ''} className="w-full h-full object-cover" />
                             ) : (
@@ -1169,7 +1261,7 @@ export default function App() {
           ) : view === 'detail' ? (
             /* Detail view */
             <div>
-              <button onClick={() => setView('home')} className="mb-4 px-3 py-1.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-100">← Retour</button>
+              <button onClick={() => setView(previousView)} className="mb-4 px-3 py-1.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-100">← Retour</button>
               {detail ? (
                 <div>
                   {/* Hero section */}

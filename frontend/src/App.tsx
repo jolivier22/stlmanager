@@ -725,7 +725,19 @@ export default function App() {
     pushToast('Fonction "Projet +" indisponible dans cette build', 'info')
   }
   const doScan = async () => {
-    try { setScanning(true); await fetch(`${API_BASE}/folders/scan`, { method: 'POST' }) } catch {} finally { setScanning(false); pushToast('Scan demandé', 'success') }
+    try { 
+      setScanning(true); 
+      await fetch(`${API_BASE}/folders/reindex-incremental`, { method: 'POST' })
+      // Reload folders after scan to show new projects
+      if (view === 'home') {
+        await loadFolders()
+      }
+      pushToast('Scan terminé', 'success')
+    } catch { 
+      pushToast('Erreur scan', 'error') 
+    } finally { 
+      setScanning(false) 
+    }
   }
   const doFullReindex = async () => {
     try { await fetch(`${API_BASE}/folders/reindex`, { method: 'POST' }); pushToast('Index complet demandé', 'success') } catch { pushToast('Erreur index complet', 'error') }

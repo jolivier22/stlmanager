@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type ChangeEvent } from 'react'
-import { Home, Tags, Star, Settings, BarChart3, RefreshCw, Search, X, Pencil, Trash2, ArrowUp } from 'lucide-react'
+import { Home, Tags, Settings, BarChart3, RefreshCw, Search, X, Pencil, Trash2, ArrowUp } from 'lucide-react'
 
 const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8091'
 
@@ -846,8 +846,6 @@ export default function App() {
         </div>
         <NavItem icon={<Home size={18} />} label="Accueil" active={view==='home'} onClick={() => { setView('home') }} />
         <NavItem icon={<Tags size={18} />} label="Tags" active={view==='tags'} onClick={() => setView('tags')} />
-        <NavItem icon={<Star size={18} />} label="Favoris" />
-        <NavItem icon={<BarChart3 size={18} />} label="Statistiques" />
         <NavItem icon={<BarChart3 size={18} />} label="Doublons" active={view==='duplicates'} onClick={() => setView('duplicates')} />
         <NavItem icon={<Settings size={18} />} label="Configuration" active={view==='settings'} onClick={() => setView('settings')} />
         <div className="mt-auto" />

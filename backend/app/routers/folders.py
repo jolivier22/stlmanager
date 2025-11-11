@@ -85,6 +85,7 @@ def list_folders(
     q: str | None = Query(None, description="Filtre texte (nom/chemin)"),
     tags: list[str] | None = Query(None, description="Filtre par tags (cumulatif): répétez le paramètre tags= pour chaque tag"),
     printed: bool | None = Query(None, description="Filtrer par imprimé (true/false)"),
+    rating: int | None = Query(None, ge=1, le=5, description="Filtrer par note (1-5 étoiles)"),
 ):
     conn = get_connection()
     cur = conn.cursor()
@@ -117,6 +118,12 @@ def list_folders(
         else:
             where_total_parts.append("(printed = 0 OR printed IS NULL)")
             where_page_parts.append("(fi.printed = 0 OR fi.printed IS NULL)")
+    # Rating filter
+    if rating is not None:
+        where_total_parts.append("(rating = ?)")
+        where_page_parts.append("(fi.rating = ?)")
+        params_total.append(rating)
+        params_page.append(rating)
 
     where_clause_total = (" WHERE " + " AND ".join(where_total_parts)) if where_total_parts else ""
     where_clause_page = (" WHERE " + " AND ".join(where_page_parts)) if where_page_parts else ""

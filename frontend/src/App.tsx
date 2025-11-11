@@ -49,6 +49,10 @@ export default function App() {
     const v = localStorage.getItem('stlm.printed') as 'all' | 'yes' | 'no' | null
     return (v === 'yes' || v === 'no') ? v : 'all'
   })
+  const [ratingFilter, setRatingFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>(() => {
+    const v = localStorage.getItem('stlm.ratingFilter') as 'all' | '1' | '2' | '3' | '4' | '5' | null
+    return (v === '1' || v === '2' || v === '3' || v === '4' || v === '5') ? v : 'all'
+  })
   // Tag filters (cumulative)
   const [filterTags, setFilterTags] = useState<string[]>(() => {
     try { const raw = localStorage.getItem('stlm.filterTags'); const arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.filter((t: any) => typeof t === 'string' && t.trim()).map((t: string) => t.trim()) : [] } catch { return [] }
@@ -220,7 +224,7 @@ export default function App() {
       loadFolders()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, sort, order, page, limit, query.trim(), filterTags, printedFilter])
+  }, [view, sort, order, page, limit, query.trim(), filterTags, printedFilter, ratingFilter])
 
   const loadFolders = async () => {
     setLoading(true)
@@ -236,6 +240,7 @@ export default function App() {
       }
       if (printedFilter === 'yes') url.searchParams.set('printed', 'true')
       if (printedFilter === 'no') url.searchParams.set('printed', 'false')
+      if (ratingFilter !== 'all') url.searchParams.set('rating', ratingFilter)
       const r = await fetch(url.toString())
       const d = await r.json()
       const items: Folder[] = d.items ?? []
@@ -957,7 +962,7 @@ export default function App() {
                       }
                     }}
                     placeholder="Tag + Entrée"
-                    className="w-36 px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500"
+                    className="w-36 px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-500 text-sm"
                   />
                   {(filterSugsLoading || (filterSugs && filterSugs.length > 0)) && (
                     <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-auto rounded-md border border-zinc-800 bg-zinc-950 shadow-lg z-20">
@@ -985,7 +990,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => { setFilterTags([]); setPage(1) }}
-                  className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-200 hover:bg-zinc-800"
+                  className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-200 hover:bg-zinc-800 text-sm"
                   title="Effacer tous les tags"
                 >
                   Effacer
@@ -996,7 +1001,7 @@ export default function App() {
             <select
               value={sort}
               onChange={(e) => { setPage(1); setSort(e.target.value as 'name' | 'date' | 'rating' | 'created' | 'modified') }}
-              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
+              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm"
               title="Trier par"
             >
               <option value="name">Nom</option>
@@ -1008,7 +1013,7 @@ export default function App() {
             <select
               value={printedFilter}
               onChange={(e) => { const v = e.target.value as 'all'|'yes'|'no'; setPrintedFilter(v); localStorage.setItem('stlm.printed', v); setPage(1) }}
-              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
+              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm"
               title="Filtrer Printed"
             >
               <option value="all">Tous</option>
@@ -1016,9 +1021,22 @@ export default function App() {
               <option value="no">Non imprimé</option>
             </select>
             <select
+              value={ratingFilter}
+              onChange={(e) => { const v = e.target.value as 'all'|'1'|'2'|'3'|'4'|'5'; setRatingFilter(v); localStorage.setItem('stlm.ratingFilter', v); setPage(1) }}
+              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm"
+              title="Filtrer par note"
+            >
+              <option value="all">Toutes notes</option>
+              <option value="5">★★★★★ (5 étoiles)</option>
+              <option value="4">★★★★☆ (4 étoiles)</option>
+              <option value="3">★★★☆☆ (3 étoiles)</option>
+              <option value="2">★★☆☆☆ (2 étoiles)</option>
+              <option value="1">★☆☆☆☆ (1 étoile)</option>
+            </select>
+            <select
               value={order}
               onChange={(e) => { setPage(1); setOrder(e.target.value as 'asc' | 'desc') }}
-              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
+              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm"
               title="Ordre"
             >
               <option value="asc">Asc</option>
@@ -1027,7 +1045,7 @@ export default function App() {
             <select
               value={String(limit)}
               onChange={(e) => { setPage(1); setLimit(Number(e.target.value)); }}
-              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100"
+              className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm"
               title="Éléments par page"
             >
               <option value="12">12</option>

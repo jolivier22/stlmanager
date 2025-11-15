@@ -1,13 +1,16 @@
 # STLManager — Architecture et Fonctionnement
 
-## 1. Ce que fait l’application
+## 1. Ce que fait l'application
 - **But**: Parcourir, rechercher et gérer une collection de projets 3D (dossiers) contenant images, GIFs, vidéos, archives (.zip/.7z/.rar) et fichiers STL.
 - **Fonctions clés**:
-  - Liste paginée/triable des projets avec aperçu (thumbnail), tags et note.
-  - Vue détaillée d’un projet (héros, médias classés par type, tailles d’archives).
-  - Renommage de projet, suppression d’images, suppression d’un projet (dossier complet).
+  - Liste paginée/triable des projets avec aperçu (thumbnail), tags et note (1-5 étoiles).
+  - Vue détaillée d'un projet (héros, médias classés par type, tailles d'archives, grille 3:4).
+  - Renommage de projet, suppression d'images, suppression d'un projet (dossier complet).
+  - **Gestion d'impression** : Cases "Printed" et "A imprimer" avec filtres dédiés.
+  - **Système de tags avancé** : Page dédiée, compteurs, suggestions automatiques.
+  - **Page doublons** : Détection et gestion des projets similaires avec SSE.
   - Indexation complète et incrémentale (projets + tags).
-  - Recherche texte (nom/chemin), toasts et dialogues de confirmation.
+  - Recherche texte (nom/chemin), filtres avancés, toasts et dialogues de confirmation.
 
 ## 2. Périmètre technique (stack)
 - **Frontend**: React + Vite, TypeScript, lucide-react (icônes), Nginx (serve statique dans Docker).
@@ -38,18 +41,21 @@ stlmanager/
 ## 4. Données et index
 - **COLLECTION_ROOT**: répertoire racine de la collection (chaque sous-dossier = 1 projet).
 - **SQLite** (fichier `CACHE_DB_PATH`, ex: `/app/data/cache.db`):
-  - `folder_index`: index des projets (path, name, rel, mtime, images/gifs/videos/archives/stls, tags, rating, thumbnail_path).
+  - `folder_index`: index des projets (path, name, rel, mtime, images/gifs/videos/archives/stls, tags, rating, thumbnail_path, **printed**, **to_print**, created_at, modified_at).
   - `preview_overrides`: miniature personnalisée par chemin (optionnel).
+  - `tag_catalog`: catalogue global des tags avec compteurs.
 - **Indexation**:
   - Complète (`POST /folders/reindex`): parcourt les dossiers au 1er niveau de `COLLECTION_ROOT`, reconstruit `folder_index`.
   - Incrémentale (`POST /folders/reindex-incremental`): met à jour les entrées modifiées.
-  - Résilience: l’index complet ignore les dossiers en erreur et renvoie `{ indexed, failed }`.
+  - **Migration automatique**: Ajout de colonnes (printed, to_print, created_at, modified_at) pour compatibilité.
+  - Résilience: l'index complet ignore les dossiers en erreur et renvoie `{ indexed, failed }`.
 
 ## 5. API (principaux endpoints)
 - **Santé**
   - `GET /health` → `{ ok: true }` ou texte simple.
 - **Liste des projets**
-  - `GET /folders/` avec `page`, `limit`, `sort` (`name|date|rating`), `order` (`asc|desc`), `q`.
+  - `GET /folders/` avec `page`, `limit`, `sort` (`name|date|rating|created|modified`), `order` (`asc|desc`), `q`, `tags[]`, `printed`, `to_print`, `rating`.
+  - **Filtres avancés** : printed (true/false), to_print (true/false), rating (1-5), tags (cumulatif).
   - Réponse: `{ items: [...], total: N }`.
 - **Détail d’un projet**
   - `GET /folders/detail?path=<abs>`
@@ -62,8 +68,15 @@ stlmanager/
 - **Indexation**
   - `POST /folders/reindex` → `{ indexed, failed }`
   - `POST /folders/reindex-incremental` → état synthétique
+- **Gestion d'impression**
+  - `POST /folders/set-printed?path=<abs>&printed=<bool>` : Marquer comme imprimé
+  - `POST /folders/set-to-print?path=<abs>&to_print=<bool>` : Marquer à imprimer
+- **Notation**
+  - `POST /folders/set-rating?path=<abs>&rating=<0-5>` : Définir la note
 - **Tags**
-  - `GET /folders/tags?limit=...&q=...` (catalogue de tags)
+  - `GET /folders/tags?limit=...&q=...` (catalogue de tags avec compteurs)
+  - `POST /folders/tags/add?path=<abs>&tag=<name>` : Ajouter un tag
+  - `POST /folders/tags/remove?path=<abs>&tag=<name>` : Supprimer un tag
   - `POST /folders/tags/reindex` (complet) / `POST /folders/tags/reindex-incremental`
 
 Notes:
@@ -72,16 +85,21 @@ Notes:
 ## 6. Frontend (App.tsx) — logique principale
 - **États principaux**:
   - `folders`, `total`, `page`, `limit`, `sort`, `order`, `q` (liste/pagination/tri/recherche)
-  - `view` (`home|detail|settings`), `detail` (projet courant)
+  - `view` (`home|detail|settings|duplicates|tags`), `detail` (projet courant), `previousView`
+  - **Filtres avancés** : `printedFilter` ('all'|'yes'|'no'|'to_print'), `ratingFilter`, `filterTags[]`
   - `toasts` (messages), `confirmMsg/confirmAct` (boîte de confirmation)
+  - **Scroll preservation** : `homeScrollY`, `duplicatesScrollY` pour navigation fluide
   - `health` (statut backend)
 - **Grille + pagination**:
   - Pagination haut et bas, boutons page précédente/suivante, pages cliquables avec ellipses.
   - Bouton flottant “Haut de page”.
 - **Vue détail**:
   - Hero + miniature + actions (renommer, supprimer projet)
-  - Listes d’images/GIFs/vidéos/archives/STL/others
-  - Taille des archives en lecture humaine
+  - **Grille d'images 3:4** : Format portrait pour meilleure visualisation
+  - **Lightbox** : Navigation clavier (flèches, Escape) avec compteur
+  - **Cases à cocher** : "Printed" et "A imprimer" avec mise à jour optimiste
+  - **Système de notation** : 5 étoiles cliquables avec effacement
+  - Listes d'images/GIFs/vidéos/archives/STL/others avec tailles
 - **Paramètres**:
   - Boutons de scan (index complet, incrémental)
   - Index tags (complet, incrémental)

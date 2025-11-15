@@ -67,17 +67,25 @@ Gérer le chemin du cache SQLite
 
 Basculer entre thème clair / sombre
 
-🔍 5. Recherche et filtres
+🔍 5. Recherche et filtres avancés
 
-Barre de recherche instantanée par :
+**Barre de recherche instantanée** par :
+- Nom de fichier
+- Tag
+- Dossier
 
-Nom de fichier
+**Filtres intelligents** :
+- **Tri** : Nom, Date, Note, Date de création, Dernière modification
+- **Ordre** : Ascendant / Descendant
+- **État d'impression** : Tous, Printed, Non imprimé, **A imprimer**
+- **Note** : Filtrage par nombre d'étoiles (1★ à 5★)
+- **Tags** : Filtrage cumulatif par tags avec suggestions automatiques
+- **Pagination** : 12, 24, 48, 96 éléments par page
 
-Tag
-
-Dossier
-
-Filtres dynamiques pour naviguer rapidement dans de grandes collections.
+**Page Tags dédiée** :
+- Liste complète des tags avec compteurs de projets
+- Tri par popularité (nombre de projets associés)
+- Recherche et filtrage en temps réel
 
 🧩 6. Visualisation 3D
 
@@ -91,13 +99,29 @@ Activer/désactiver l’affichage filaire ou solide.
 
 Basculer entre plusieurs miniatures ou vues.
 
-🧠 7. Organisation & métadonnées
+🧠 7. Organisation & métadonnées avancées
 
-Possibilité d’ajouter des tags personnalisés.
+**Système de tags intelligent** :
+- Ajout de tags personnalisés avec suggestions automatiques
+- Filtrage cumulatif par tags (AND logique)
+- Page dédiée avec statistiques et compteurs
+- Sauvegarde dans JSON local + base SQLite
 
-Les modifications sont sauvegardées dans le JSON local du projet et dans la base SQLite.
+**Système de notation** :
+- Note de 1 à 5 étoiles par projet
+- Tri et filtrage par note
+- Affichage visuel avec étoiles pleines/vides
 
-Possibilité future : création automatique de collections thématiques (par tag, dossier, date...).
+**Gestion d'impression** :
+- Case "Printed" : Marquer les projets imprimés
+- Case "A imprimer" : File d'attente d'impression
+- Filtres dédiés pour la gestion du workflow d'impression
+
+**Métadonnées automatiques** :
+- Date d'ajout (première indexation)
+- Date de modification (dernière mise à jour)
+- Compteurs de fichiers par type (images, GIFs, vidéos, archives, STL)
+- Miniatures automatiques ou personnalisées
 
 🔒 8. Architecture et déploiement
 
@@ -136,9 +160,32 @@ Tu ajoutes des tags, génères des miniatures, etc.
 
 Les prochaines ouvertures sont quasi instantanées, sans rescanner.
 
+## 🆕 Fonctionnalités récentes
+
+### Interface utilisateur améliorée
+- **Topbar compacte** : Police réduite pour plus d'espace
+- **Grille d'images 3:4** : Format portrait pour les images dans le détail des projets
+- **Navigation fluide** : Sauvegarde de la position de scroll entre les vues
+- **Page doublons** : Détection et gestion des projets similaires
+
+### Gestion d'impression avancée
+- **Case "A imprimer"** : Marquer les projets pour impression future
+- **Filtre unifié** : 4 options dans un seul dropdown (Tous, Printed, Non imprimé, A imprimer)
+- **Workflow complet** : De la sélection à l'impression avec suivi d'état
+
+### Système de notation
+- **Notes par étoiles** : 1 à 5 étoiles par projet avec interface visuelle
+- **Tri et filtrage** : Recherche par note exacte (ex: uniquement 5 étoiles)
+- **Persistance** : Sauvegarde dans JSON + base de données
+
+### Bouton Scanner fonctionnel
+- **Correction endpoint** : Utilise maintenant `/folders/reindex-incremental`
+- **Rechargement automatique** : Met à jour la liste après scan
+- **Détection nouveaux projets** : Import automatique des nouveaux dossiers
+
 ℹ️ Notes importantes
 
-- Miniature effective (priorité): override utilisateur `preview_overrides` (si défini via l’action “Définir comme miniature”) > miniature de `folder_index` (issue du JSON ou de la première image trouvée) > première image du dossier.
+- Miniature effective (priorité): override utilisateur `preview_overrides` (si défini via l'action "Définir comme miniature") > miniature de `folder_index` (issue du JSON ou de la première image trouvée) > première image du dossier.
 - Profondeur de scan: la réindexation de dossiers (`/folders/reindex*`) parcourt uniquement le 1er niveau sous `COLLECTION_ROOT`. Le scan `/scan` pour la table `projects` est récursif et séparé.
 
 ## Déploiement NAS (ex. OpenMediaVault / Raspberry Pi)

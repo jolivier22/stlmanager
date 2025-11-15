@@ -1532,7 +1532,7 @@ export default function App() {
                             aria-label={`Ouvrir l'image ${i+1}`}
                             onClick={() => openLightbox(i)}
                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openLightbox(i) }}
-                            className="relative group w-full h-32 overflow-hidden rounded border border-zinc-700 bg-zinc-900 cursor-pointer"
+                            className="relative group w-full aspect-[3/4] overflow-hidden rounded border border-zinc-700 bg-zinc-900 cursor-pointer"
                           >
                             <img src={fileUrl(`${detail.path}/${fn}`)} loading="lazy" className="w-full h-full object-cover cursor-pointer" onClick={() => openLightbox(i)} />
                             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />

@@ -20,6 +20,7 @@ type Folder = {
   created_at?: string | null
   modified_at?: string | null
   printed?: boolean
+  to_print?: boolean
 }
 
 export default function App() {
@@ -45,9 +46,9 @@ export default function App() {
     const v = localStorage.getItem('stlm.order') as 'asc' | 'desc' | null
     return (v === 'asc' || v === 'desc') ? v : 'asc'
   })
-  const [printedFilter, setPrintedFilter] = useState<'all' | 'yes' | 'no'>(() => {
-    const v = localStorage.getItem('stlm.printed') as 'all' | 'yes' | 'no' | null
-    return (v === 'yes' || v === 'no') ? v : 'all'
+  const [printedFilter, setPrintedFilter] = useState<'all' | 'yes' | 'no' | 'to_print'>(() => {
+    const v = localStorage.getItem('stlm.printed') as 'all' | 'yes' | 'no' | 'to_print' | null
+    return (v === 'yes' || v === 'no' || v === 'to_print') ? v : 'all'
   })
   const [ratingFilter, setRatingFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>(() => {
     const v = localStorage.getItem('stlm.ratingFilter') as 'all' | '1' | '2' | '3' | '4' | '5' | null
@@ -166,6 +167,26 @@ export default function App() {
     }
   }
 
+  const setToPrint = async (value: boolean) => {
+    if (!detail?.path) return
+    // optimistic update
+    setDetail((prev: any) => prev ? { ...prev, to_print: value } : prev)
+    setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, to_print: value } : f) : prev))
+    try {
+      const url = new URL(`${API_BASE}/folders/set-to-print`)
+      url.search = `path=${encodeURIComponent(detail.path)}&to_print=${value ? 'true' : 'false'}`
+      const r = await fetch(url.toString(), { method: 'POST' })
+      if (!r.ok) {
+        // revert on failure
+        setDetail((prev: any) => prev ? { ...prev, to_print: !value } : prev)
+        setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, to_print: !value } : f) : prev))
+      }
+    } catch (e) {
+      setDetail((prev: any) => prev ? { ...prev, to_print: !value } : prev)
+      setFolders((prev) => (Array.isArray(prev) ? prev.map((f:any) => f.path === detail.path ? { ...f, to_print: !value } : f) : prev))
+    }
+  }
+
   // Load disk usage when entering Home view
   useEffect(() => {
     if (view === 'home') {
@@ -240,6 +261,7 @@ export default function App() {
       }
       if (printedFilter === 'yes') url.searchParams.set('printed', 'true')
       if (printedFilter === 'no') url.searchParams.set('printed', 'false')
+      if (printedFilter === 'to_print') url.searchParams.set('to_print', 'true')
       if (ratingFilter !== 'all') url.searchParams.set('rating', ratingFilter)
       const r = await fetch(url.toString())
       const d = await r.json()
@@ -1024,13 +1046,14 @@ export default function App() {
             </select>
             <select
               value={printedFilter}
-              onChange={(e) => { const v = e.target.value as 'all'|'yes'|'no'; setPrintedFilter(v); localStorage.setItem('stlm.printed', v); setPage(1) }}
+              onChange={(e) => { const v = e.target.value as 'all'|'yes'|'no'|'to_print'; setPrintedFilter(v); localStorage.setItem('stlm.printed', v); setPage(1) }}
               className="px-2 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-100 text-sm"
               title="Filtrer Printed"
             >
               <option value="all">Tous</option>
               <option value="yes">Printed</option>
               <option value="no">Non imprimé</option>
+              <option value="to_print">A imprimer</option>
             </select>
             <select
               value={ratingFilter}
@@ -1478,6 +1501,10 @@ export default function App() {
                           <label className="ml-3 inline-flex items-center gap-2 text-xs text-zinc-300">
                             <input type="checkbox" checked={!!detail?.printed} onChange={(e) => setPrinted(e.target.checked)} />
                             Printed
+                          </label>
+                          <label className="ml-3 inline-flex items-center gap-2 text-xs text-zinc-300">
+                            <input type="checkbox" checked={!!detail?.to_print} onChange={(e) => setToPrint(e.target.checked)} />
+                            A imprimer
                           </label>
                         </div>
                         <div className="mt-2 text-sm text-zinc-400">

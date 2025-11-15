@@ -85,6 +85,7 @@ def list_folders(
     q: str | None = Query(None, description="Filtre texte (nom/chemin)"),
     tags: list[str] | None = Query(None, description="Filtre par tags (cumulatif): répétez le paramètre tags= pour chaque tag"),
     printed: bool | None = Query(None, description="Filtrer par imprimé (true/false)"),
+    to_print: bool | None = Query(None, description="Filtrer par à imprimer (true/false)"),
     rating: int | None = Query(None, ge=1, le=5, description="Filtrer par note (1-5 étoiles)"),
 ):
     conn = get_connection()
@@ -118,6 +119,14 @@ def list_folders(
         else:
             where_total_parts.append("(printed = 0 OR printed IS NULL)")
             where_page_parts.append("(fi.printed = 0 OR fi.printed IS NULL)")
+    # To print filter
+    if to_print is not None:
+        if to_print is True:
+            where_total_parts.append("(to_print = 1)")
+            where_page_parts.append("(fi.to_print = 1)")
+        else:
+            where_total_parts.append("(to_print = 0 OR to_print IS NULL)")
+            where_page_parts.append("(fi.to_print = 0 OR fi.to_print IS NULL)")
     # Rating filter
     if rating is not None:
         where_total_parts.append("(rating = ?)")
@@ -152,7 +161,7 @@ def list_folders(
     cur.execute(
         f"""
         SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
-               fi.tags, fi.rating, fi.created_at, fi.modified_at, fi.printed,
+               fi.tags, fi.rating, fi.created_at, fi.modified_at, fi.printed, fi.to_print,
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path
@@ -1307,7 +1316,7 @@ def get_folder_detail(path: str = Query(..., description="Chemin absolu d'un pro
     cur.execute(
         """
         SELECT fi.name, fi.path, fi.rel, fi.mtime, fi.images, fi.gifs, fi.videos, fi.archives, fi.stls,
-               fi.tags, fi.rating, fi.created_at, fi.modified_at, fi.printed,
+               fi.tags, fi.rating, fi.created_at, fi.modified_at, fi.printed, fi.to_print,
                COALESCE(po.thumbnail_path, fi.thumbnail_path) AS thumbnail_path
         FROM folder_index fi
         LEFT JOIN preview_overrides po ON po.path = fi.path
@@ -1434,6 +1443,49 @@ def set_folder_printed(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
     return {"ok": True, "printed": bool(printed)}
+
+
+@router.post("/set-to-print")
+def set_folder_to_print(
+    path: str = Query(..., description="Chemin absolu du projet (dossier)"),
+    to_print: bool = Query(..., description="Projet à imprimer ?"),
+):
+    folder_path = Path(path)
+    if not folder_path.exists() or not folder_path.is_dir():
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    # Update meta JSON
+    meta_path = folder_path / ".stl_collect.json"
+    meta: dict = {}
+    if meta_path.exists() and meta_path.is_file():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh) or {}
+        except Exception:
+            meta = {}
+    meta["to_print"] = bool(to_print)
+    # Ensure dates
+    try:
+        if not meta.get("added_at"):
+            ctime = folder_path.stat().st_ctime
+            meta["added_at"] = datetime.fromtimestamp(ctime).isoformat()
+    except Exception:
+        meta["added_at"] = datetime.now().isoformat()
+    meta["modified_at"] = datetime.now().isoformat()
+    try:
+        with open(meta_path, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur écriture meta: {e}")
+    # Update index
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE folder_index SET to_print = ? WHERE path = ?", (1 if to_print else 0, path))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur mise à jour index: {e}")
+    return {"ok": True, "to_print": bool(to_print)}
 
 
 @router.post("/delete-file")

@@ -105,6 +105,14 @@ def init_db() -> None:
             print(f"[db] migration: printed skipped: {e}")
     else:
         print("[db] migration: printed already present")
+    if "to_print" not in cols:
+        try:
+            cur.execute("ALTER TABLE folder_index ADD COLUMN to_print INTEGER DEFAULT 0")
+            print("[db] migration: added column to_print")
+        except Exception as e:
+            print(f"[db] migration: to_print skipped: {e}")
+    else:
+        print("[db] migration: to_print already present")
     try:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_folder_index_created_at ON folder_index(created_at)")
     except Exception:

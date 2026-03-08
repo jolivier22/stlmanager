@@ -1160,8 +1160,15 @@ export default function App() {
                   ) : (
                     <div className="w-full h-full bg-zinc-800" />
                   )}
-                  {isNew((f as any).created_at) && (
-                    <span className="absolute top-2 left-2 px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-600 text-white border border-emerald-700 shadow">New</span>
+                  {(isNew((f as any).created_at) || !!(f as any).to_print) && (
+                    <div className="absolute top-2 left-2 flex gap-1">
+                      {isNew((f as any).created_at) && (
+                        <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-600 text-white border border-emerald-700 shadow">New</span>
+                      )}
+                      {!!(f as any).to_print && (
+                        <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-amber-500 text-black border border-amber-600 shadow">To Print</span>
+                      )}
+                    </div>
                   )}
                   {f.printed && (
                     <span className="absolute top-2 right-2 px-2 py-0.5 text-[10px] font-semibold rounded bg-sky-600 text-white border border-sky-700 shadow">Printed</span>

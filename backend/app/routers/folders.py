@@ -368,8 +368,8 @@ def upload_to_project(path: str = Query(..., description="Chemin absolu du proje
         cur.execute(
             """
             INSERT OR REPLACE INTO folder_index
-            (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at)
-            VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at)
+            (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed, to_print)
+            VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed, :to_print)
             """,
             rec,
         )
@@ -391,6 +391,7 @@ def _build_folder_record(fpath: Path):
     created_at = None
     modified_at = None
     printed_flag = 0
+    to_print_flag = 0
     if meta_path.exists() and meta_path.is_file():
         try:
             with open(meta_path, "r", encoding="utf-8") as fh:
@@ -424,6 +425,15 @@ def _build_folder_record(fpath: Path):
                     printed_flag = 1 if pr else 0
                 elif isinstance(pr, (int, float)):
                     printed_flag = 1 if int(pr) != 0 else 0
+            except Exception:
+                pass
+            # To print
+            try:
+                tp = meta.get("to_print")
+                if isinstance(tp, bool):
+                    to_print_flag = 1 if tp else 0
+                elif isinstance(tp, (int, float)):
+                    to_print_flag = 1 if int(tp) != 0 else 0
             except Exception:
                 pass
             # Dates
@@ -472,6 +482,7 @@ def _build_folder_record(fpath: Path):
         "created_at": created_at,
         "modified_at": modified_at,
         "printed": printed_flag,
+        "to_print": to_print_flag,
     }
 
 
@@ -521,8 +532,8 @@ def reindex_folders():
                 cur.execute(
                     """
                     INSERT OR REPLACE INTO folder_index
-                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed)
-                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed)
+                    (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed, to_print)
+                    VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed, :to_print)
                     """,
                     rec,
                 )
@@ -602,8 +613,8 @@ def reindex_folders_incremental():
             cur.execute(
                 """
                 INSERT OR REPLACE INTO folder_index
-                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed)
-                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed)
+                (path, name, rel, mtime, images, gifs, videos, archives, stls, tags, rating, thumbnail_path, created_at, modified_at, printed, to_print)
+                VALUES (:path, :name, :rel, :mtime, :images, :gifs, :videos, :archives, :stls, :tags, :rating, :thumbnail_path, :created_at, :modified_at, :printed, :to_print)
                 """,
                 rec,
             )
